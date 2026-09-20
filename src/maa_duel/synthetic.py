@@ -115,7 +115,9 @@ def generate_synthetic_dataset(
         for variant in range(portrait_variants):
             augmented = _augment_portrait(image, rng)
             destination = class_dir / f"{enemy.enemy_id:04d}-{variant:04d}.jpg"
-            cv2.imencode(".jpg", augmented, [cv2.IMWRITE_JPEG_QUALITY, int(rng.integers(65, 96))])[1].tofile(destination)
+            cv2.imencode(".jpg", augmented, [cv2.IMWRITE_JPEG_QUALITY, int(rng.integers(65, 96))])[1].tofile(
+                destination
+            )
             portrait_count += 1
     (output / "roster").mkdir(parents=True, exist_ok=True)
     (output / "roster" / "class-map.json").write_text(
@@ -131,8 +133,7 @@ def generate_synthetic_dataset(
     if detection_images > 0 and not backgrounds:
         raise ValueError("battlefield synthesis requires at least one image in assets/backgrounds")
     sprite_bank = {
-        enemy.enemy_id: _sprite_frames(workspace / relative_path)
-        for enemy, relative_path in available_animations
+        enemy.enemy_id: _sprite_frames(workspace / relative_path) for enemy, relative_path in available_animations
     }
     image_dir = output / "battlefield" / "images" / "train"
     label_dir = output / "battlefield" / "labels" / "train"

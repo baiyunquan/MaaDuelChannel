@@ -29,7 +29,7 @@ class ReviewCorrection(BaseModel):
     note: str = ""
 
     @model_validator(mode="after")
-    def revalidate_sample(self) -> "ReviewCorrection":
+    def revalidate_sample(self) -> ReviewCorrection:
         self.sample = RoundSample.model_validate(self.sample.model_dump(mode="json"))
         return self
 
@@ -53,10 +53,7 @@ class ReviewStore:
     def overlay(self, automatic: list[RoundSample]) -> list[RoundSample]:
         corrections = self.load()
         return [
-            corrections.get(sample.sample_id, ReviewCorrection(sample=sample)).sample
-            if sample.sample_id in corrections
-            else sample
-            for sample in automatic
+            corrections[sample.sample_id].sample if sample.sample_id in corrections else sample for sample in automatic
         ]
 
 
@@ -74,9 +71,7 @@ def apply_table_edits(
         if not row or row[0] not in rosters:
             continue
         side = str(row[0])
-        rosters[side].append(
-            RosterEntry(enemy_id=int(row[1]), count=int(row[2]), confidence=float(row[3]))
-        )
+        rosters[side].append(RosterEntry(enemy_id=int(row[1]), count=int(row[2]), confidence=float(row[3])))
     for row in unit_rows:
         if not row or row[0] not in units:
             continue

@@ -62,3 +62,18 @@ def test_segmenter_ignores_non_game_countdowns():
     ]
 
     assert RoundSegmenter().segment(signals) == []
+
+
+def test_segmenter_infers_zero_window_when_one_disappears_before_round_banner():
+    signals = [
+        signal(0.0, countdown=2),
+        signal(0.5, countdown=1),
+        signal(1.0, layout_score=0.8),
+        signal(1.5, round_number=1),
+        signal(3.0),
+    ]
+
+    result = RoundSegmenter().segment(signals)[0]
+
+    assert result.complete
+    assert result.layout_time == pytest.approx(1.0)

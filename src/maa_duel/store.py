@@ -23,7 +23,7 @@ def write_jsonl(path: Path, rows: Iterable[BaseModel]) -> None:
     os.replace(temporary, path)
 
 
-def read_jsonl(path: Path, model: type[ModelT]) -> list[ModelT]:
+def read_jsonl[ModelT: BaseModel](path: Path, model: type[ModelT]) -> list[ModelT]:
     if not path.exists():
         return []
     rows: list[ModelT] = []

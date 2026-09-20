@@ -29,13 +29,14 @@ _DIGIT_REPLACEMENTS = str.maketrans(
         "|": "1",
         "：": ":",
         "．": ".",
+        "-": ":",
     }
 )
 
 
 def _numeric_text(text: str, *, allow_separator: bool) -> str:
     candidate = text.strip().lstrip("xX×").strip()
-    allowed = r"[0-9OoDQIl|\s:.：．]+" if allow_separator else r"[0-9OoDQIl|\s]+"
+    allowed = r"[0-9OoDQIl|\s:.：．-]+" if allow_separator else r"[0-9OoDQIl|\s]+"
     if not re.fullmatch(allowed, candidate):
         digits = re.findall(r"\d+", candidate)
         if digits:
@@ -83,9 +84,9 @@ class RapidOcrEngine:
 
     def recognize(self, image: np.ndarray, *, detect: bool = True) -> list[OcrText]:
         result = self._engine(image, use_det=detect, use_cls=detect, use_rec=True)
-        texts = list(result.txts or [])
-        scores = list(result.scores or [])
-        boxes = list(result.boxes or []) if detect else [None] * len(texts)
+        texts = [] if result.txts is None else list(result.txts)
+        scores = [] if result.scores is None else list(result.scores)
+        boxes = ([] if result.boxes is None else list(result.boxes)) if detect else [None] * len(texts)
         return [
             OcrText(
                 text=str(text),

@@ -21,9 +21,7 @@ def test_sync_assets_imports_local_sources_and_reports_missing(tmp_path):
     with catalog.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=["id", "名称", "原始名称", "portrait", "animation"])
         writer.writeheader()
-        writer.writerow(
-            {"id": 1, "名称": "甲", "原始名称": "A", "portrait": "portrait.png", "animation": "sprite.png"}
-        )
+        writer.writerow({"id": 1, "名称": "甲", "原始名称": "A", "portrait": "portrait.png", "animation": "sprite.png"})
         writer.writerow({"id": 2, "名称": "乙", "原始名称": "B", "portrait": "", "animation": ""})
 
     manifest = sync_assets(catalog, tmp_path / "workspace")

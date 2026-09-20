@@ -136,7 +136,7 @@ def fuse_roster_observations(
         grouped[(observation.side, observation.slot)].append(observation)
 
     by_side: dict[SideName, list[RosterEntry]] = {"left": [], "right": []}
-    for (side, slot), values in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1])):
+    for (side, _slot), values in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1])):
         type_votes: dict[int, float] = defaultdict(float)
         count_votes: dict[int, float] = defaultdict(float)
         for value in values:

@@ -88,4 +88,3 @@ class DuelTransformer(nn.Module):
         left = self.team_encoder(left_ids, left_positions, left_mask)
         right = self.team_encoder(right_ids, right_positions, right_mask)
         return self._ordered_score(left, right) - self._ordered_score(right, left)
-

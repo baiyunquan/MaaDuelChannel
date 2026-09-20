@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-import shutil
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -154,4 +153,3 @@ def sync_assets(catalog: Path, workspace: Path, *, background_dir: Path | None =
 
 def load_asset_manifest(path: Path) -> AssetManifest:
     return AssetManifest.model_validate_json(path.read_text(encoding="utf-8"))
-

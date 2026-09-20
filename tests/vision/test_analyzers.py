@@ -73,3 +73,56 @@ def test_roster_recognizer_uses_configured_icon_and_count_slots():
         ("left", 7, 3),
         ("right", 7, 2),
     ]
+
+
+def test_phase_analyzer_recognizes_player_anchor_split_across_ocr_boxes():
+    checkerboard = np.indices((180, 320)).sum(axis=0) % 2
+    frame = np.repeat((checkerboard * 255).astype(np.uint8)[..., None], 3, axis=2)
+    ocr = QueueOcr(
+        [
+            [],
+            [OcrText("5/", 0.99), OcrText("5", 0.99)],
+        ]
+    )
+
+    signal = OcrPhaseAnalyzer(ocr).analyze(frame, 2.0)
+
+    assert signal.game_visible
+    assert signal.layout_score > 0.5
+
+
+def test_phase_analyzer_keeps_short_game_grace_window_after_countdown():
+    frame = np.zeros((180, 320, 3), dtype=np.uint8)
+    frame[30:150:2, 30:290:2] = 255
+    ocr = QueueOcr(
+        [
+            [OcrText("00:01", 0.99)],
+            [],
+            [],
+            [],
+        ]
+    )
+    analyzer = OcrPhaseAnalyzer(ocr, game_signal_grace_seconds=2.0)
+
+    assert analyzer.analyze(frame, 5.0).countdown_seconds == 1
+    layout = analyzer.analyze(frame, 6.0)
+
+    assert layout.game_visible
+    assert layout.layout_score > 0.0
+
+
+class RecordingOcr:
+    def __init__(self):
+        self.detect_flags = []
+
+    def recognize(self, image, *, detect=True):
+        self.detect_flags.append(detect)
+        return []
+
+
+def test_phase_analyzer_uses_recognition_only_for_fixed_regions():
+    ocr = RecordingOcr()
+
+    OcrPhaseAnalyzer(ocr).analyze(np.zeros((180, 320, 3), dtype=np.uint8), 0.0)
+
+    assert ocr.detect_flags == [False, False]

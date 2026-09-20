@@ -27,7 +27,7 @@ class TensorBatch:
     right_mask: torch.Tensor
     labels: torch.Tensor
 
-    def to(self, device: torch.device) -> "TensorBatch":
+    def to(self, device: torch.device) -> TensorBatch:
         return TensorBatch(**{name: value.to(device) for name, value in vars(self).items()})
 
 
@@ -145,11 +145,7 @@ def train_predictor_model(
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     selected_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    maximum_enemy_id = max(
-        unit.enemy_id
-        for sample in samples
-        for unit in (*sample.left_units, *sample.right_units)
-    )
+    maximum_enemy_id = max(unit.enemy_id for sample in samples for unit in (*sample.left_units, *sample.right_units))
     config = ModelConfig(
         num_enemy_ids=maximum_enemy_id + 1,
         embedding_dim=embedding_dim,

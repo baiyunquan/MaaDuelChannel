@@ -36,8 +36,16 @@ def reconcile_detections(
     minimum_confidence: float = 0.25,
 ) -> ReconciliationResult:
     raw_by_side = {
-        "left": [item for item in detections if item.confidence >= minimum_confidence and (item.bbox.x1 + item.bbox.x2) / 2 < 0.5],
-        "right": [item for item in detections if item.confidence >= minimum_confidence and (item.bbox.x1 + item.bbox.x2) / 2 >= 0.5],
+        "left": [
+            item
+            for item in detections
+            if item.confidence >= minimum_confidence and (item.bbox.x1 + item.bbox.x2) / 2 < 0.5
+        ],
+        "right": [
+            item
+            for item in detections
+            if item.confidence >= minimum_confidence and (item.bbox.x1 + item.bbox.x2) / 2 >= 0.5
+        ],
     }
     rosters = {"left": left_roster, "right": right_roster}
     selected_by_side: dict[str, list[UnitDetection]] = {"left": [], "right": []}

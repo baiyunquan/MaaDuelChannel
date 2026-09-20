@@ -3,8 +3,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from maa_duel.video.inventory import Arena, scan_inventory
 from maa_duel.store import read_jsonl
+from maa_duel.video.inventory import Arena, scan_inventory
 
 
 def write_video(path: Path, width=320, height=180, frame_count=6):

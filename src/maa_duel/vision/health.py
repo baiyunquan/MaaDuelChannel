@@ -15,32 +15,53 @@ class HealthCounts:
 
 
 class HealthBarDetector:
-    def __init__(self, *, minimum_width: int = 8, maximum_height_ratio: float = 0.04, minimum_aspect: float = 2.5):
+    def __init__(
+        self,
+        *,
+        minimum_width: int = 8,
+        minimum_width_ratio: float = 0.01,
+        minimum_height: int = 4,
+        maximum_width_ratio: float = 0.25,
+        maximum_height_ratio: float = 0.04,
+        minimum_aspect: float = 4.0,
+        battlefield_roi: tuple[float, float, float, float] = (0.20, 0.08, 0.80, 0.95),
+    ) -> None:
         self.minimum_width = minimum_width
+        self.minimum_width_ratio = minimum_width_ratio
+        self.minimum_height = minimum_height
+        self.maximum_width_ratio = maximum_width_ratio
         self.maximum_height_ratio = maximum_height_ratio
         self.minimum_aspect = minimum_aspect
+        self.battlefield_roi = battlefield_roi
 
     def count(self, image: np.ndarray) -> HealthCounts:
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        orange = cv2.inRange(hsv, np.array((5, 100, 100)), np.array((30, 255, 255)))
-        blue = cv2.inRange(hsv, np.array((85, 90, 80)), np.array((125, 255, 255)))
+        orange = cv2.inRange(hsv, np.array((0, 100, 100)), np.array((30, 255, 255)))
+        blue = cv2.inRange(hsv, np.array((90, 100, 150)), np.array((115, 255, 255)))
         return HealthCounts(
-            orange=self._count_mask(orange, image.shape[0]),
-            blue=self._count_mask(blue, image.shape[0]),
+            orange=self._count_mask(orange, image.shape[1], image.shape[0]),
+            blue=self._count_mask(blue, image.shape[1], image.shape[0]),
         )
 
-    def _count_mask(self, mask: np.ndarray, frame_height: int) -> int:
+    def _count_mask(self, mask: np.ndarray, frame_width: int, frame_height: int) -> int:
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1))
         cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         count = 0
+        minimum_width = max(self.minimum_width, int(frame_width * self.minimum_width_ratio))
+        maximum_width = int(frame_width * self.maximum_width_ratio)
         maximum_height = max(2, int(frame_height * self.maximum_height_ratio))
+        roi_x1, roi_y1, roi_x2, roi_y2 = self.battlefield_roi
         for contour in contours:
-            _, _, width, height = cv2.boundingRect(contour)
+            x, y, width, height = cv2.boundingRect(contour)
+            center_x = (x + width / 2) / frame_width
+            center_y = (y + height / 2) / frame_height
             if (
-                width >= self.minimum_width
-                and 1 <= height <= maximum_height
+                minimum_width <= width <= maximum_width
+                and self.minimum_height <= height <= maximum_height
                 and width / height >= self.minimum_aspect
+                and roi_x1 <= center_x <= roi_x2
+                and roi_y1 <= center_y <= roi_y2
             ):
                 count += 1
         return count

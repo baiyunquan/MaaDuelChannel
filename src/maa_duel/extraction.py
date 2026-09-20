@@ -321,4 +321,3 @@ def extract_rounds(input_dir: Path, workspace: Path) -> list[RoundSample]:
 
     error_path.write_text(json.dumps(errors, ensure_ascii=False, indent=2), encoding="utf-8")
     return samples
-

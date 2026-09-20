@@ -18,7 +18,8 @@ def assets_sync(
 ) -> None:
     from maa_duel.assets import sync_assets
 
-    sync_assets(catalog, workspace, background_dir=background_dir)
+    manifest = sync_assets(catalog, workspace, background_dir=background_dir)
+    typer.echo(f"Synced {len(manifest.enemies)} enemies to {workspace / 'assets'}")
 
 
 @app.command()
@@ -28,16 +29,26 @@ def scan(
 ) -> None:
     from maa_duel.video import scan_videos
 
-    scan_videos(input_dir, workspace)
+    records = scan_videos(input_dir, workspace)
+    typer.echo(f"Scanned {len(records)} videos")
 
 
 @app.command()
 def synth(
     workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    portrait_variants: Annotated[int, typer.Option(min=1)] = 40,
+    detection_images: Annotated[int, typer.Option(min=0)] = 1000,
+    seed: Annotated[int, typer.Option()] = 20260920,
 ) -> None:
     from maa_duel.synthetic import generate_synthetic_dataset
 
-    generate_synthetic_dataset(workspace)
+    result = generate_synthetic_dataset(
+        workspace,
+        portrait_variants=portrait_variants,
+        detection_images=detection_images,
+        seed=seed,
+    )
+    typer.echo(f"Generated {result.portrait_images} portrait and {result.detection_images} battlefield images")
 
 
 @app.command("train-vision")
@@ -45,10 +56,23 @@ def train_vision(
     task: Annotated[str, typer.Argument(help="roster or battlefield")],
     workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
     all_samples: Annotated[bool, typer.Option("--all", help="Use every available sample.")] = False,
+    epochs: Annotated[int, typer.Option(min=1)] = 100,
+    image_size: Annotated[int, typer.Option(min=64)] = 640,
+    device: Annotated[str, typer.Option(help="Ultralytics device, for example 0 or cpu.")] = "0",
+    base_model: Annotated[str | None, typer.Option(help="Override the default YOLO checkpoint.")] = None,
 ) -> None:
     from maa_duel.training.vision import train_vision_model
 
-    train_vision_model(task, workspace, all_samples=all_samples)
+    path = train_vision_model(
+        task,
+        workspace,
+        all_samples=all_samples,
+        epochs=epochs,
+        image_size=image_size,
+        device=device,
+        base_model=base_model,
+    )
+    typer.echo(f"Vision checkpoint: {path}")
 
 
 @app.command()
@@ -58,7 +82,8 @@ def extract(
 ) -> None:
     from maa_duel.extraction import extract_rounds
 
-    extract_rounds(input_dir, workspace)
+    samples = extract_rounds(input_dir, workspace)
+    typer.echo(f"Extracted {len(samples)} round samples")
 
 
 @app.command()
@@ -76,17 +101,40 @@ def build_dataset(
 ) -> None:
     from maa_duel.dataset import build_predictor_dataset
 
-    build_predictor_dataset(workspace)
+    rows = build_predictor_dataset(workspace)
+    typer.echo(f"Wrote {len(rows)} accepted predictor samples")
 
 
 @app.command("train-predictor")
 def train_predictor(
     workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
     all_samples: Annotated[bool, typer.Option("--all", help="Use every accepted sample.")] = False,
+    epochs: Annotated[int, typer.Option(min=1)] = 100,
+    batch_size: Annotated[int, typer.Option(min=1)] = 64,
+    embedding_dim: Annotated[int, typer.Option(min=8)] = 128,
+    heads: Annotated[int, typer.Option(min=1)] = 4,
+    layers: Annotated[int, typer.Option(min=1)] = 3,
+    dropout: Annotated[float, typer.Option(min=0.0, max=0.9)] = 0.1,
+    learning_rate: Annotated[float, typer.Option(min=1e-8)] = 3e-4,
+    device: Annotated[str | None, typer.Option(help="Torch device such as cuda or cpu.")] = None,
+    seed: Annotated[int, typer.Option()] = 20260920,
 ) -> None:
     from maa_duel.training.predictor import train_predictor_model
 
-    train_predictor_model(workspace, all_samples=all_samples)
+    result = train_predictor_model(
+        workspace,
+        all_samples=all_samples,
+        epochs=epochs,
+        batch_size=batch_size,
+        embedding_dim=embedding_dim,
+        heads=heads,
+        layers=layers,
+        dropout=dropout,
+        learning_rate=learning_rate,
+        device=device,
+        seed=seed,
+    )
+    typer.echo(f"Trained on {result['training_samples']} samples; metrics are training-only")
 
 
 @app.command()
@@ -95,5 +143,5 @@ def report(
 ) -> None:
     from maa_duel.reporting import write_report
 
-    write_report(workspace)
-
+    path = write_report(workspace)
+    typer.echo(f"Report: {path}")

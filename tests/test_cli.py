@@ -19,3 +19,18 @@ def test_cli_exposes_pipeline_commands():
         "report",
     ):
         assert command in result.stdout
+
+
+def test_training_commands_expose_reproducibility_options():
+    runner = CliRunner()
+    predictor = runner.invoke(app, ["train-predictor", "--help"])
+    vision = runner.invoke(app, ["train-vision", "--help"])
+    synthetic = runner.invoke(app, ["synth", "--help"])
+
+    assert predictor.exit_code == 0
+    assert "--epochs" in predictor.stdout
+    assert "--seed" in predictor.stdout
+    assert vision.exit_code == 0
+    assert "--device" in vision.stdout
+    assert synthetic.exit_code == 0
+    assert "--detection-images" in synthetic.stdout

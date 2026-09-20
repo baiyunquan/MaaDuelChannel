@@ -33,7 +33,7 @@ class BoundingBox(BaseModel):
     y2: float = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
-    def validate_order(self) -> "BoundingBox":
+    def validate_order(self) -> BoundingBox:
         if self.x1 >= self.x2 or self.y1 >= self.y2:
             raise ValueError("bounding box must have positive width and height")
         return self
@@ -87,7 +87,7 @@ class Timestamps(BaseModel):
     battle_end: float = Field(ge=0.0)
 
     @model_validator(mode="after")
-    def validate_order(self) -> "Timestamps":
+    def validate_order(self) -> Timestamps:
         values = (self.prep, self.layout, self.battle_start, self.battle_end)
         if values != tuple(sorted(values)):
             raise ValueError("round timestamps must be ordered")
@@ -121,7 +121,7 @@ class RoundSample(BaseModel):
     failure_reasons: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_accepted_sample(self) -> "RoundSample":
+    def validate_accepted_sample(self) -> RoundSample:
         if self.review_status is ReviewStatus.ACCEPTED:
             if self.winner is None:
                 raise ValueError("accepted sample requires a winner")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ class _ActiveRound:
     observed_round_number: int | None = None
     prep_time: float | None = None
     zero_seen: bool = False
+    last_countdown_seconds: int | None = None
     layout_time: float | None = None
     layout_score: float = 0.0
     battle_start: float | None = None
@@ -54,6 +55,7 @@ class RoundSegmenter:
                     active = None
                 if active is None:
                     active = _ActiveRound(sequence_index=len(rounds) + 1)
+                active.last_countdown_seconds = item.countdown_seconds
                 if item.countdown_seconds > 0:
                     active.prep_time = item.timestamp
                 else:
@@ -68,6 +70,13 @@ class RoundSegmenter:
                 if active.battle_start is None:
                     active.battle_start = item.timestamp
                 continue
+
+            if (
+                not active.zero_seen
+                and active.last_countdown_seconds is not None
+                and active.last_countdown_seconds <= 1
+            ):
+                active.zero_seen = True
 
             if active.battle_start is None and active.zero_seen and item.layout_score > active.layout_score:
                 active.layout_score = item.layout_score

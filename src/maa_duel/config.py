@@ -16,7 +16,7 @@ class PipelineConfig(BaseModel):
     pipeline_version: str = "0.1.0"
 
     @model_validator(mode="after")
-    def validate_workspace_is_external(self) -> "PipelineConfig":
+    def validate_workspace_is_external(self) -> PipelineConfig:
         input_path = self.input_dir.resolve(strict=False)
         workspace_path = self.workspace_dir.resolve(strict=False)
         if workspace_path == input_path or input_path in workspace_path.parents:
