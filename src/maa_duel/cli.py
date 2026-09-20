@@ -7,7 +7,9 @@ import typer
 
 app = typer.Typer(no_args_is_help=True, help="Duel Channel dataset and training pipeline.")
 assets_app = typer.Typer(no_args_is_help=True, help="Manage traceable enemy assets.")
+annotate_app = typer.Typer(no_args_is_help=True, help="Exchange annotations with Ultralytics Platform.")
 app.add_typer(assets_app, name="assets")
+app.add_typer(annotate_app, name="annotate")
 
 
 @assets_app.command("sync")
@@ -80,16 +82,30 @@ def synth(
 
 @app.command("train-vision")
 def train_vision(
-    task: Annotated[str, typer.Argument(help="roster or battlefield")],
+    task: Annotated[str, typer.Argument(help="roster, battlefield, or ocr")],
     workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
     all_samples: Annotated[bool, typer.Option("--all", help="Use every available sample.")] = False,
     epochs: Annotated[int, typer.Option(min=1)] = 100,
     image_size: Annotated[int, typer.Option(min=64)] = 640,
     device: Annotated[str, typer.Option(help="Ultralytics device, for example 0 or cpu.")] = "0",
     base_model: Annotated[str | None, typer.Option(help="Override the default YOLO checkpoint.")] = None,
+    dataset_version: Annotated[
+        str | None, typer.Option(help="Reviewed dataset version under workspace/datasets.")
+    ] = None,
+    batch: Annotated[float, typer.Option(help="Batch size, -1 for auto, or a 0-1 GPU memory fraction.")] = -1,
+    workers: Annotated[int, typer.Option(min=0, help="DataLoader worker processes.")] = 8,
+    cache: Annotated[str, typer.Option(help="Ultralytics cache mode: disk, ram, or none.")] = "disk",
+    amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Use automatic mixed precision.")] = True,
+    deterministic: Annotated[bool, typer.Option("--deterministic/--no-deterministic")] = True,
+    seed: Annotated[int, typer.Option()] = 20260920,
+    patience: Annotated[int, typer.Option(min=0)] = 50,
 ) -> None:
     from maa_duel.training.vision import train_vision_model
 
+    if cache.casefold() not in {"disk", "ram", "none"}:
+        raise typer.BadParameter("--cache must be disk, ram, or none")
+    if batch > 1 and not batch.is_integer():
+        raise typer.BadParameter("--batch values above 1 must be whole numbers")
     path = train_vision_model(
         task,
         workspace,
@@ -98,6 +114,14 @@ def train_vision(
         image_size=image_size,
         device=device,
         base_model=base_model,
+        dataset_version=dataset_version,
+        batch=int(batch) if batch >= 1 and batch.is_integer() else batch,
+        workers=workers,
+        cache=False if cache.casefold() == "none" else cache.casefold(),
+        amp=amp,
+        deterministic=deterministic,
+        seed=seed,
+        patience=patience,
     )
     typer.echo(f"Vision checkpoint: {path}")
 
@@ -106,10 +130,13 @@ def train_vision(
 def extract(
     input_dir: Annotated[Path, typer.Option(exists=True, file_okay=False)],
     workspace: Annotated[Path, typer.Option(file_okay=False)],
+    device: Annotated[str, typer.Option(help="Ultralytics inference device, for example 0 or cpu.")] = "0",
+    half: Annotated[bool, typer.Option("--half/--no-half", help="Use FP16 inference on supported GPUs.")] = True,
+    batch_size: Annotated[int, typer.Option(min=1, help="YOLO inference batch size.")] = 32,
 ) -> None:
     from maa_duel.extraction import extract_rounds
 
-    samples = extract_rounds(input_dir, workspace)
+    samples = extract_rounds(input_dir, workspace, device=device, half=half, batch_size=batch_size)
     typer.echo(f"Extracted {len(samples)} round samples")
 
 
@@ -119,7 +146,90 @@ def review(
 ) -> None:
     from maa_duel.review import launch_review
 
-    launch_review(workspace)
+    exported = launch_review(workspace)
+    typer.echo(f"Platform export: {exported.directory}")
+    for task, archive in exported.archives.items():
+        typer.echo(f"  {task.value}: {archive} ({exported.item_counts[task]} items)")
+
+
+@annotate_app.command("export")
+def annotate_export(
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    export_id: Annotated[str | None, typer.Option(help="Stable export name; defaults to a UTC timestamp.")] = None,
+) -> None:
+    from maa_duel.annotations import export_platform_annotations
+
+    exported = export_platform_annotations(workspace, export_id=export_id)
+    typer.echo(f"Upload these archives at https://platform.ultralytics.com/: {exported.directory}")
+    for task, archive in exported.archives.items():
+        typer.echo(f"  {task.value}: {archive} ({exported.item_counts[task]} items)")
+
+
+@annotate_app.command("import")
+def annotate_import(
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    export_directory: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    roster: Annotated[Path | None, typer.Option(exists=True, dir_okay=False, help="Roster Platform NDJSON.")] = None,
+    battlefield: Annotated[
+        Path | None, typer.Option(exists=True, dir_okay=False, help="Battlefield Platform NDJSON.")
+    ] = None,
+    ocr: Annotated[Path | None, typer.Option(exists=True, dir_okay=False, help="OCR Platform NDJSON.")] = None,
+    version: Annotated[str | None, typer.Option(help="Local immutable annotation version.")] = None,
+    parent_version: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    from maa_duel.annotations import import_platform_annotations
+    from maa_duel.contracts import AnnotationTask
+
+    exports = {
+        task: path
+        for task, path in (
+            (AnnotationTask.ROSTER_CLASSIFICATION, roster),
+            (AnnotationTask.BATTLEFIELD_DETECTION, battlefield),
+            (AnnotationTask.OCR_CLASSIFICATION, ocr),
+        )
+        if path is not None
+    }
+    if not exports:
+        raise typer.BadParameter("provide at least one of --roster, --battlefield, or --ocr")
+    contract = import_platform_annotations(
+        workspace,
+        export_directory,
+        exports,
+        version=version,
+        parent_version=parent_version,
+    )
+    typer.echo(f"Imported annotation version {contract.dataset_version}: {contract.task_counts}")
+
+
+@annotate_app.command("sample")
+def annotate_sample(
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    annotation_version: Annotated[str, typer.Option(help="Version under annotations/versions.")],
+    output_version: Annotated[str | None, typer.Option()] = None,
+    maximum_samples: Annotated[int | None, typer.Option(min=1)] = None,
+    hard_fraction: Annotated[float, typer.Option(min=0.0, max=1.0)] = 0.5,
+    replay_fraction: Annotated[float, typer.Option(min=0.0, max=1.0)] = 0.3,
+    base_fraction: Annotated[float, typer.Option(min=0.0, max=1.0)] = 0.2,
+    seed: Annotated[int, typer.Option()] = 20260920,
+) -> None:
+    from maa_duel.contracts import SamplingPolicy
+    from maa_duel.sampling import sample_training_sets
+
+    contract = sample_training_sets(
+        workspace,
+        annotation_version,
+        output_version=output_version,
+        policy=SamplingPolicy(
+            hard_fraction=hard_fraction,
+            replay_fraction=replay_fraction,
+            base_fraction=base_fraction,
+            maximum_samples=maximum_samples,
+            seed=seed,
+        ),
+    )
+    typer.echo(
+        f"Built dataset {contract.dataset_version}: tasks={contract.task_counts}, buckets={contract.bucket_counts}"
+    )
 
 
 @app.command("build-dataset")
@@ -145,6 +255,12 @@ def train_predictor(
     learning_rate: Annotated[float, typer.Option(min=1e-8)] = 3e-4,
     device: Annotated[str | None, typer.Option(help="Torch device such as cuda or cpu.")] = None,
     seed: Annotated[int, typer.Option()] = 20260920,
+    workers: Annotated[int, typer.Option(min=0)] = 4,
+    amp: Annotated[bool, typer.Option("--amp/--no-amp")] = True,
+    amp_dtype: Annotated[str, typer.Option(help="float16 or bfloat16.")] = "float16",
+    compile_model: Annotated[bool, typer.Option("--compile/--no-compile")] = False,
+    pin_memory: Annotated[bool, typer.Option("--pin-memory/--no-pin-memory")] = True,
+    tf32: Annotated[bool, typer.Option("--tf32/--no-tf32")] = True,
 ) -> None:
     from maa_duel.training.predictor import train_predictor_model
 
@@ -160,6 +276,12 @@ def train_predictor(
         learning_rate=learning_rate,
         device=device,
         seed=seed,
+        workers=workers,
+        amp=amp,
+        amp_dtype=amp_dtype,
+        compile_model=compile_model,
+        pin_memory=pin_memory,
+        tf32=tf32,
     )
     typer.echo(f"Trained on {result['training_samples']} samples; metrics are training-only")
 

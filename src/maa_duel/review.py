@@ -44,8 +44,12 @@ class ReviewStore:
         return {row.sample.sample_id: row for row in rows}
 
     def save(self, correction: ReviewCorrection) -> None:
+        self.save_many([correction])
+
+    def save_many(self, values: list[ReviewCorrection]) -> None:
         corrections = self.load()
-        corrections[correction.sample.sample_id] = correction
+        for correction in values:
+            corrections[correction.sample.sample_id] = correction
         write_jsonl(
             self.path,
             (corrections[key] for key in sorted(corrections)),
@@ -167,89 +171,13 @@ def _annotated_layout(workspace: Path, sample: RoundSample):
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
-def launch_review(workspace: Path) -> None:
-    try:
-        import gradio as gr
-    except ImportError as exc:
-        raise RuntimeError("Gradio is not installed; install the review extra") from exc
+def launch_review(workspace: Path):
+    """Prepare Platform datasets and open the hosted visual annotation editor."""
 
-    automatic = read_jsonl(workspace / "manifests" / "rounds.auto.jsonl", RoundSample)
-    if not automatic:
-        raise ValueError("automatic round manifest is empty; run extract first")
-    store = ReviewStore(workspace / "review" / "corrections.jsonl")
-    samples = store.overlay(automatic)
+    import webbrowser
 
-    def load(index: int):
-        index = max(0, min(len(samples) - 1, int(index)))
-        sample = samples[index]
-        prep = str(workspace / sample.evidence.prep) if sample.evidence.prep else None
-        end = str(workspace / sample.evidence.end) if sample.evidence.end else None
-        return (
-            index,
-            f"{index + 1}/{len(samples)} · {sample.sample_id} · {sample.review_status.value}",
-            prep,
-            _annotated_layout(workspace, sample),
-            end,
-            _roster_rows(sample),
-            _unit_rows(sample),
-            sample.winner.value if sample.winner else None,
-            "\n".join(sample.failure_reasons),
-        )
+    from maa_duel.annotations import PLATFORM_URL, export_platform_annotations
 
-    def save(index, roster_rows, unit_rows, winner, note, accepted):
-        index = int(index)
-        status = ReviewStatus.ACCEPTED if accepted else ReviewStatus.REJECTED
-        edited = apply_table_edits(
-            samples[index],
-            roster_rows=roster_rows,
-            unit_rows=unit_rows,
-            winner=winner,
-            status=status,
-        )
-        samples[index] = edited
-        store.save(ReviewCorrection(sample=edited, note=note or ""))
-        next_index = min(index + 1, len(samples) - 1)
-        return load(next_index)
-
-    with gr.Blocks(title="MAA Duel Channel Review") as demo:
-        index = gr.State(0)
-        title = gr.Markdown()
-        with gr.Row():
-            prep_image = gr.Image(label="Preparation", interactive=False)
-            layout_image = gr.Image(label="Initial layout", interactive=False)
-            end_image = gr.Image(label="Winner evidence", interactive=False)
-        roster = gr.Dataframe(
-            headers=["side", "enemy_id", "count", "confidence"],
-            datatype=["str", "number", "number", "number"],
-            type="array",
-            label="Roster",
-        )
-        units = gr.Dataframe(
-            headers=["side", "enemy_id", "x", "y", "x1", "y1", "x2", "y2", "confidence"],
-            datatype=["str", "number", "number", "number", "number", "number", "number", "number", "number"],
-            type="array",
-            label="Units and boxes",
-        )
-        winner = gr.Dropdown(["left", "right"], label="Winner")
-        note = gr.Textbox(label="Review note")
-        with gr.Row():
-            previous = gr.Button("Previous")
-            accept = gr.Button("Accept", variant="primary")
-            reject = gr.Button("Reject")
-            following = gr.Button("Next")
-
-        outputs = [index, title, prep_image, layout_image, end_image, roster, units, winner, note]
-        demo.load(load, inputs=[index], outputs=outputs)
-        previous.click(lambda value: load(int(value) - 1), inputs=[index], outputs=outputs)
-        following.click(lambda value: load(int(value) + 1), inputs=[index], outputs=outputs)
-        accept.click(
-            lambda idx, r, u, w, n: save(idx, r, u, w, n, True),
-            inputs=[index, roster, units, winner, note],
-            outputs=outputs,
-        )
-        reject.click(
-            lambda idx, r, u, w, n: save(idx, r, u, w, n, False),
-            inputs=[index, roster, units, winner, note],
-            outputs=outputs,
-        )
-    demo.launch(inbrowser=True)
+    exported = export_platform_annotations(workspace)
+    webbrowser.open(PLATFORM_URL)
+    return exported

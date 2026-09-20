@@ -29,8 +29,18 @@ class Classification:
     confidence: float
 
 
+@dataclass(frozen=True)
+class CountClassification:
+    count: int | None
+    confidence: float
+
+
 class PortraitClassifier(Protocol):
     def classify(self, image: np.ndarray) -> Classification: ...
+
+
+class CountClassifier(Protocol):
+    def classify_batch(self, images: list[np.ndarray]) -> list[CountClassification]: ...
 
 
 @dataclass(frozen=True)
@@ -85,45 +95,85 @@ class RosterFrameRecognizer:
         ocr: OcrEngine,
         *,
         slots: list[SlotSpec] | None = None,
+        count_classifier: CountClassifier | None = None,
         minimum_type_confidence: float = 0.25,
         minimum_count_confidence: float = 0.25,
     ) -> None:
         self.classifier = classifier
         self.ocr = ocr
         self.slots = slots or default_slot_specs()
+        self.count_classifier = count_classifier
         self.minimum_type_confidence = minimum_type_confidence
         self.minimum_count_confidence = minimum_count_confidence
 
     def recognize(self, frame: np.ndarray) -> list[RosterObservation]:
-        observations: list[RosterObservation] = []
-        for slot in self.slots:
-            classification = self.classifier.classify(crop_normalized(frame, slot.icon_rect))
-            if classification.enemy_id < 1 or classification.confidence < self.minimum_type_confidence:
-                continue
-            candidates = sorted(
-                self.ocr.recognize(crop_normalized(frame, slot.count_rect), detect=False),
-                key=lambda item: item.confidence,
-                reverse=True,
+        return self.recognize_batch([frame])[0]
+
+    def recognize_batch(self, frames: list[np.ndarray]) -> list[list[RosterObservation]]:
+        if not frames:
+            return []
+        icon_crops = [crop_normalized(frame, slot.icon_rect) for frame in frames for slot in self.slots]
+        classify_batch = getattr(self.classifier, "classify_batch", None)
+        classifications = (
+            classify_batch(icon_crops)
+            if callable(classify_batch)
+            else [self.classifier.classify(crop) for crop in icon_crops]
+        )
+        count_classifications = (
+            self.count_classifier.classify_batch(
+                [crop_normalized(frame, slot.count_rect) for frame in frames for slot in self.slots]
             )
-            for candidate in candidates:
-                if candidate.confidence < self.minimum_count_confidence:
+            if self.count_classifier is not None
+            else None
+        )
+        output: list[list[RosterObservation]] = []
+        offset = 0
+        for frame in frames:
+            observations: list[RosterObservation] = []
+            frame_classifications = classifications[offset : offset + len(self.slots)]
+            offset += len(self.slots)
+            for slot_position, (slot, classification) in enumerate(zip(self.slots, frame_classifications, strict=True)):
+                if classification.enemy_id < 1 or classification.confidence < self.minimum_type_confidence:
                     continue
-                try:
-                    count = parse_count(candidate.text)
-                except ValueError:
+                if count_classifications is not None:
+                    count_result = count_classifications[offset - len(self.slots) + slot_position]
+                    if count_result.count is not None and count_result.confidence >= self.minimum_count_confidence:
+                        observations.append(
+                            RosterObservation(
+                                side=slot.side,
+                                slot=slot.index,
+                                enemy_id=classification.enemy_id,
+                                count=count_result.count,
+                                type_confidence=classification.confidence,
+                                count_confidence=count_result.confidence,
+                            )
+                        )
                     continue
-                observations.append(
-                    RosterObservation(
-                        side=slot.side,
-                        slot=slot.index,
-                        enemy_id=classification.enemy_id,
-                        count=count,
-                        type_confidence=classification.confidence,
-                        count_confidence=candidate.confidence,
-                    )
+                candidates = sorted(
+                    self.ocr.recognize(crop_normalized(frame, slot.count_rect), detect=False),
+                    key=lambda item: item.confidence,
+                    reverse=True,
                 )
-                break
-        return observations
+                for candidate in candidates:
+                    if candidate.confidence < self.minimum_count_confidence:
+                        continue
+                    try:
+                        count = parse_count(candidate.text)
+                    except ValueError:
+                        continue
+                    observations.append(
+                        RosterObservation(
+                            side=slot.side,
+                            slot=slot.index,
+                            enemy_id=classification.enemy_id,
+                            count=count,
+                            type_confidence=classification.confidence,
+                            count_confidence=candidate.confidence,
+                        )
+                    )
+                    break
+            output.append(observations)
+        return output
 
 
 def fuse_roster_observations(

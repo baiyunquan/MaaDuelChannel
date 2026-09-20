@@ -178,12 +178,13 @@ class VideoExtractor:
                 min(window.layout_time - 0.05, window.prep_time + 0.2),
             }
         )
-        observations: list[RosterObservation] = []
-        prep_frame: np.ndarray | None = None
-        for timestamp in prep_times:
-            frame = self._read_frame(video_path, timestamp)
-            prep_frame = frame
-            observations.extend(self.roster_recognizer.recognize(frame))
+        prep_frames = [self._read_frame(video_path, timestamp) for timestamp in prep_times]
+        prep_frame = prep_frames[-1]
+        recognize_batch = getattr(self.roster_recognizer, "recognize_batch", None)
+        if callable(recognize_batch):
+            observations = [item for frame_items in recognize_batch(prep_frames) for item in frame_items]
+        else:
+            observations = [item for frame in prep_frames for item in self.roster_recognizer.recognize(frame)]
         rosters = fuse_roster_observations(observations)
 
         layout_frame = self._read_frame(video_path, window.layout_time)
@@ -207,7 +208,6 @@ class VideoExtractor:
             "layout": relative_dir / f"{sample_id}-layout.jpg",
             "end": relative_dir / f"{sample_id}-end.jpg",
         }
-        assert prep_frame is not None
         self._write_image(workspace / filenames["prep"], prep_frame)
         self._write_image(workspace / filenames["layout"], layout_frame)
         self._write_image(workspace / filenames["end"], end_frame)
@@ -278,12 +278,19 @@ class VideoExtractor:
         encoded.tofile(path)
 
 
-def extract_rounds(input_dir: Path, workspace: Path) -> list[RoundSample]:
+def extract_rounds(
+    input_dir: Path,
+    workspace: Path,
+    *,
+    device: str = "0",
+    half: bool = True,
+    batch_size: int = 32,
+) -> list[RoundSample]:
     """Run extraction for every Green Vine video and replace the automatic manifest."""
 
     from maa_duel.config import PipelineConfig
     from maa_duel.store import read_jsonl, write_jsonl
-    from maa_duel.training.vision import YoloBattlefieldDetector, YoloPortraitClassifier
+    from maa_duel.training.vision import YoloBattlefieldDetector, YoloCountClassifier, YoloPortraitClassifier
     from maa_duel.video.inventory import Arena, VideoRecord, scan_inventory
     from maa_duel.vision.health import HealthBarDetector
     from maa_duel.vision.ocr import RapidOcrEngine
@@ -292,11 +299,19 @@ def extract_rounds(input_dir: Path, workspace: Path) -> list[RoundSample]:
 
     roster_model = workspace / "models" / "vision" / "roster" / "weights" / "best.pt"
     battlefield_model = workspace / "models" / "vision" / "battlefield" / "weights" / "best.pt"
+    ocr_model = workspace / "models" / "vision" / "ocr" / "weights" / "best.pt"
+    ocr_class_map = workspace / "models" / "vision" / "ocr" / "class-map.json"
+    roster_class_map = workspace / "models" / "vision" / "roster" / "class-map.json"
+    battlefield_class_map = workspace / "models" / "vision" / "battlefield" / "class-map.json"
+    if not roster_class_map.is_file():
+        roster_class_map = workspace / "synthetic" / "roster" / "class-map.json"
+    if not battlefield_class_map.is_file():
+        battlefield_class_map = workspace / "synthetic" / "battlefield" / "class-map.json"
     required = (
         ("roster model", roster_model),
         ("battlefield model", battlefield_model),
-        ("roster class map", workspace / "synthetic" / "roster" / "class-map.json"),
-        ("battlefield class map", workspace / "synthetic" / "battlefield" / "class-map.json"),
+        ("roster class map", roster_class_map),
+        ("battlefield class map", battlefield_class_map),
     )
     for label, path in required:
         if not path.is_file():
@@ -311,18 +326,36 @@ def extract_rounds(input_dir: Path, workspace: Path) -> list[RoundSample]:
         else scan_inventory(input_dir, video_manifest)
     )
     ocr = RapidOcrEngine()
+    count_classifier = (
+        YoloCountClassifier(
+            ocr_model,
+            ocr_class_map,
+            device=device,
+            half=half,
+            batch_size=batch_size,
+        )
+        if ocr_model.is_file() and ocr_class_map.is_file()
+        else None
+    )
     extractor = VideoExtractor(
         phase_analyzer=OcrPhaseAnalyzer(ocr),
         roster_recognizer=RosterFrameRecognizer(
             YoloPortraitClassifier(
                 roster_model,
-                workspace / "synthetic" / "roster" / "class-map.json",
+                roster_class_map,
+                device=device,
+                half=half,
+                batch_size=batch_size,
             ),
             ocr,
+            count_classifier=count_classifier,
         ),
         battlefield_detector=YoloBattlefieldDetector(
             battlefield_model,
-            workspace / "synthetic" / "battlefield" / "class-map.json",
+            battlefield_class_map,
+            device=device,
+            half=half,
+            batch_size=batch_size,
         ),
         health_detector=HealthBarDetector(),
         scan_fps=config.sample_fps,

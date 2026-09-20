@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 import subprocess
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +13,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+from maa_duel.contracts import ModelVersion, sha256_file, write_contract
 from maa_duel.dataset import PredictorSample
 from maa_duel.schema import Winner
 from maa_duel.store import read_jsonl
@@ -27,8 +30,8 @@ class TensorBatch:
     right_mask: torch.Tensor
     labels: torch.Tensor
 
-    def to(self, device: torch.device) -> TensorBatch:
-        return TensorBatch(**{name: value.to(device) for name, value in vars(self).items()})
+    def to(self, device: torch.device, *, non_blocking: bool = False) -> TensorBatch:
+        return TensorBatch(**{name: value.to(device, non_blocking=non_blocking) for name, value in vars(self).items()})
 
 
 class PredictorDataset(Dataset):
@@ -125,6 +128,12 @@ def train_predictor_model(
     learning_rate: float = 3e-4,
     device: str | None = None,
     seed: int = 20260920,
+    workers: int = 4,
+    amp: bool = True,
+    amp_dtype: str = "float16",
+    compile_model: bool = False,
+    pin_memory: bool = True,
+    tf32: bool = True,
 ) -> dict[str, object]:
     if not all_samples:
         raise ValueError("predictor training requires --all; no validation or test split is created")
@@ -145,6 +154,15 @@ def train_predictor_model(
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     selected_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    if amp_dtype not in {"float16", "bfloat16"}:
+        raise ValueError("amp_dtype must be float16 or bfloat16")
+    cuda_enabled = selected_device.type == "cuda"
+    amp_enabled = amp and cuda_enabled
+    autocast_dtype = torch.float16 if amp_dtype == "float16" else torch.bfloat16
+    torch.set_float32_matmul_precision("high")
+    if cuda_enabled:
+        torch.backends.cuda.matmul.allow_tf32 = tf32
+        torch.backends.cudnn.allow_tf32 = tf32
     maximum_enemy_id = max(unit.enemy_id for sample in samples for unit in (*sample.left_units, *sample.right_units))
     config = ModelConfig(
         num_enemy_ids=maximum_enemy_id + 1,
@@ -154,6 +172,7 @@ def train_predictor_model(
         dropout=dropout,
     )
     model = DuelTransformer(config).to(selected_device)
+    training_model = torch.compile(model) if compile_model else model
     loader_generator = torch.Generator().manual_seed(seed)
     loader = DataLoader(
         PredictorDataset(samples),
@@ -161,12 +180,19 @@ def train_predictor_model(
         shuffle=True,
         collate_fn=collate_samples,
         generator=loader_generator,
+        num_workers=workers,
+        pin_memory=pin_memory and cuda_enabled,
+        persistent_workers=workers > 0,
     )
     left_wins = sum(sample.winner is Winner.LEFT for sample in samples)
     right_wins = len(samples) - left_wins
     positive_weight = right_wins / left_wins if left_wins and right_wins else 1.0
     criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(positive_weight, device=selected_device))
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    scaler = torch.amp.GradScaler(
+        selected_device.type,
+        enabled=amp_enabled and autocast_dtype is torch.float16,
+    )
     model_dir = workspace / "models" / "predictor"
     history: list[dict[str, float | int]] = []
     best_loss = float("inf")
@@ -177,19 +203,25 @@ def train_predictor_model(
         correct = 0
         seen = 0
         for batch in loader:
-            batch = batch.to(selected_device)
+            batch = batch.to(selected_device, non_blocking=pin_memory and cuda_enabled)
             optimizer.zero_grad(set_to_none=True)
-            logits = model(
-                batch.left_ids,
-                batch.left_positions,
-                batch.left_mask,
-                batch.right_ids,
-                batch.right_positions,
-                batch.right_mask,
-            )
-            loss = criterion(logits, batch.labels)
-            loss.backward()
-            optimizer.step()
+            with torch.autocast(
+                device_type=selected_device.type,
+                dtype=autocast_dtype,
+                enabled=amp_enabled,
+            ):
+                logits = training_model(
+                    batch.left_ids,
+                    batch.left_positions,
+                    batch.left_mask,
+                    batch.right_ids,
+                    batch.right_positions,
+                    batch.right_mask,
+                )
+                loss = criterion(logits, batch.labels)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             batch_size_actual = batch.labels.shape[0]
             total_loss += float(loss.detach()) * batch_size_actual
             correct += int(((logits.detach() >= 0) == (batch.labels >= 0.5)).sum())
@@ -215,6 +247,14 @@ def train_predictor_model(
         "test_samples": 0,
         "dataset_sha256": metadata["dataset_sha256"],
         "device": str(selected_device),
+        "precision": amp_dtype if amp_enabled else "float32",
+        "gpu": {
+            "amp": amp_enabled,
+            "workers": workers,
+            "pin_memory": pin_memory and cuda_enabled,
+            "compile": compile_model,
+            "tf32": tf32 and cuda_enabled,
+        },
         "model_config": asdict(config),
         "class_balance": {"left": left_wins, "right": right_wins},
         "metrics_scope": "training-only",
@@ -226,4 +266,36 @@ def train_predictor_model(
         json.dumps(report, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    checkpoint = model_dir / "best-train-loss.pt"
+    model_version = f"predictor-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
+    version_dir = model_dir / "versions" / model_version
+    version_dir.mkdir(parents=True, exist_ok=False)
+    version_checkpoint = version_dir / "best-train-loss.pt"
+    shutil.copy2(checkpoint, version_checkpoint)
+    shutil.copy2(model_dir / "training-report.json", version_dir / "training-report.json")
+    contract = ModelVersion(
+        model_version=model_version,
+        task="predictor",
+        dataset_version=metadata.get("dataset_version"),
+        base_model="DuelTransformer",
+        checkpoint=version_checkpoint.relative_to(workspace).as_posix(),
+        checkpoint_sha256=sha256_file(version_checkpoint),
+        device=str(selected_device),
+        precision=("fp16" if amp_dtype == "float16" else "bf16") if amp_enabled else "fp32",
+        training_args={
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "learning_rate": learning_rate,
+            "workers": workers,
+            "amp": amp_enabled,
+            "amp_dtype": amp_dtype,
+            "compile": compile_model,
+            "pin_memory": pin_memory,
+            "tf32": tf32,
+            "seed": seed,
+        },
+        git_commit=_git_commit(),
+    )
+    write_contract(version_dir / "model.json", contract)
+    write_contract(model_dir / "model.json", contract)
     return report

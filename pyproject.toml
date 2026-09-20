@@ -15,7 +15,6 @@ dependencies = [
 [project.optional-dependencies]
 ocr = ["rapidocr>=3.0", "onnxruntime>=1.20"]
 vision = ["ultralytics>=8.3"]
-review = ["gradio>=5.0"]
 cpu = ["torch>=2.7", "torchvision>=0.22"]
 cu128 = ["torch>=2.7", "torchvision>=0.22"]
 

@@ -22,7 +22,7 @@
 
 ~~~powershell
 uv sync --group dev
-uv sync --extra cu128 --extra ocr --extra vision --extra review --group dev
+uv sync --extra cu128 --extra ocr --extra vision --group dev
 ~~~
 
 仅运行 CPU 测试和小规模训练：
@@ -45,7 +45,9 @@ G:\MAA-DuelChannel\
     ├── synthetic\          # YOLO 合成训练集
     ├── manifests\          # 视频、自动识别和 Predictor JSONL
     ├── frames\             # 准备、站位和胜负证据帧
-    ├── review\             # 人工 correction
+    ├── review\platform\    # Platform 上传包、裁剪图和本地映射
+    ├── annotations\        # Platform 回导的不可变标注版本
+    ├── datasets\           # Hard/Replay/Base 采样后的训练版本
     ├── models\             # YOLO 与 Transformer checkpoint
     └── reports\            # 统计和错误报告
 ~~~
@@ -111,8 +113,8 @@ uv run duel synth --workspace G:\MAA-DuelChannel\workspace --portrait-variants 4
 ### 3. 训练两个视觉模型
 
 ~~~powershell
-uv run duel train-vision roster --workspace G:\MAA-DuelChannel\workspace --epochs 100 --device 0 --all
-uv run duel train-vision battlefield --workspace G:\MAA-DuelChannel\workspace --epochs 100 --device 0 --all
+uv run duel train-vision roster --workspace G:\MAA-DuelChannel\workspace --epochs 100 --device 0 --batch -1 --cache disk --amp --all
+uv run duel train-vision battlefield --workspace G:\MAA-DuelChannel\workspace --epochs 100 --device 0 --batch -1 --cache disk --amp --all
 ~~~
 
 - roster：准备区圆形头像分类。
@@ -124,7 +126,7 @@ uv run duel train-vision battlefield --workspace G:\MAA-DuelChannel\workspace --
 ### 4. 提取对局
 
 ~~~powershell
-uv run duel extract --input-dir G:\MAA-DuelChannel\training-data --workspace G:\MAA-DuelChannel\workspace
+uv run duel extract --input-dir G:\MAA-DuelChannel\training-data --workspace G:\MAA-DuelChannel\workspace --device 0 --half --batch-size 32
 ~~~
 
 提取器以低帧率扫描时间线，再只在证据时间点运行昂贵模型：
@@ -138,17 +140,62 @@ uv run duel extract --input-dir G:\MAA-DuelChannel\training-data --workspace G:\
 
 自动结果写入 manifests\rounds.auto.jsonl。不完整窗口和单局识别错误写入 reports\extraction-errors.json，同视频中已经成功提取的局仍会保留。重复提取可以覆盖自动结果，不会覆盖 review\corrections.jsonl 中的人工修正。
 
-### 5. 人工审核
+### 5. 在 Ultralytics Platform 人工审核
 
 ~~~powershell
 uv run duel review --workspace G:\MAA-DuelChannel\workspace
 ~~~
 
-浏览器界面同时显示准备帧、标注后的站位帧和结束证据帧。可以编辑双方清单、单位落脚点和框、胜方以及审核备注。人工接受时会再次验证每一方各类型的清单数量与单位数量完全相等。
+命令会打开 Ultralytics Platform，并在 `review\platform\<export-id>` 生成三个上传包：
+
+- `roster_classification.zip`：六个准备区头像裁剪，使用 Platform 的图像分类选择器纠正敌人类型。
+- `battlefield_detection.zip`：完整战场帧和初始 YOLO 框，使用矩形工具增删、移动框并纠正类别。
+- `ocr_classification.zip`：六个数量数字裁剪，以 `count_1`、`count_2` 等类别纠正 OCR；`empty` 和 `unreadable` 单独保留。
+
+三个数据集在 Platform 完成审核后，从数据集或 Versions 页分别下载 NDJSON，并一次导回：
+
+~~~powershell
+uv run duel annotate import `
+  --workspace G:\MAA-DuelChannel\workspace `
+  --export-directory G:\MAA-DuelChannel\workspace\review\platform\platform-20260921T120000Z `
+  --roster C:\Downloads\roster.ndjson `
+  --battlefield C:\Downloads\battlefield.ndjson `
+  --ocr C:\Downloads\ocr.ndjson `
+  --version annotations-v1
+~~~
+
+文件名中的稳定标注 ID 会把 Platform 结果映射回视频、局、左右方和槽位。导入器同时写入
+`annotations\versions\annotations-v1`，并将头像、数量和框合并到 `review\corrections.jsonl`。已有胜负标签且双方数量与检测框完全一致时，该局自动成为 accepted；否则继续保持 pending。
 
 样本身份由视频 SHA-256 和局序号决定，不依赖证据帧的具体时间。某局在一次自动重提取中暂时缺失时，已经保存的人工审核结果仍会进入有效数据集。
 
-### 6. 构建 Transformer 数据集
+### 6. 构建 Hard、Replay、Base 视觉训练集
+
+~~~powershell
+uv run duel annotate sample `
+  --workspace G:\MAA-DuelChannel\workspace `
+  --annotation-version annotations-v1 `
+  --output-version vision-v2 `
+  --hard-fraction 0.5 `
+  --replay-fraction 0.3 `
+  --base-fraction 0.2
+~~~
+
+- Hard Set：全部经人工修改的真实样本，始终保留，不受最大样本数截断。
+- Replay Set：按任务和类别轮转抽取的“模型原识别正确”真实样本，用于抑制灾难性遗忘。
+- Base Set：从原始合成头像与战场数据中分层抽样，维持类别覆盖和基础视觉能力。
+
+采样结果写入 `datasets\vision-v2`，同一个标注不会同时进入多个集合。随后针对审核数据进行下一轮训练：
+
+~~~powershell
+uv run duel train-vision roster --workspace G:\MAA-DuelChannel\workspace --dataset-version vision-v2 --device 0 --batch -1 --amp --all
+uv run duel train-vision battlefield --workspace G:\MAA-DuelChannel\workspace --dataset-version vision-v2 --device 0 --batch -1 --amp --all
+uv run duel train-vision ocr --workspace G:\MAA-DuelChannel\workspace --dataset-version vision-v2 --device 0 --batch -1 --amp --all
+~~~
+
+训练出 OCR 分类模型后，`extract` 会优先批量使用它识别准备区数量；倒计时和 `ROUND` 文本仍由 RapidOCR 识别。没有 OCR 分类 checkpoint 时自动回退到 RapidOCR 数量识别。
+
+### 7. 构建 Transformer 数据集
 
 ~~~powershell
 uv run duel build-dataset --workspace G:\MAA-DuelChannel\workspace
@@ -156,10 +203,10 @@ uv run duel build-dataset --workspace G:\MAA-DuelChannel\workspace
 
 输出 manifests\predictor.jsonl 和 predictor.meta.json。构建器先用人工 correction 覆盖自动结果，只写 accepted 样本，并记录数据集 SHA-256、实际写入数量和胜负分布。
 
-### 7. 训练胜负预测模型
+### 8. 训练胜负预测模型
 
 ~~~powershell
-uv run duel train-predictor --workspace G:\MAA-DuelChannel\workspace --epochs 100 --batch-size 64 --device cuda --seed 20260920 --all
+uv run duel train-predictor --workspace G:\MAA-DuelChannel\workspace --epochs 100 --batch-size 64 --device cuda --workers 4 --amp --amp-dtype float16 --pin-memory --tf32 --seed 20260920 --all
 ~~~
 
 每只单位是一个 token，包含敌人 ID embedding 和归一化位置。数量由同类 token 的重复次数表示。批次使用动态 padding 和 attention mask；右方 x 坐标会镜像为从其出生侧观察的坐标。
@@ -171,10 +218,13 @@ uv run duel train-predictor --workspace G:\MAA-DuelChannel\workspace --epochs 10
 - models\predictor\last.pt
 - models\predictor\best-train-loss.pt
 - models\predictor\training-report.json
+- models\predictor\versions\<model-version>\best-train-loss.pt
 
 训练入口会验证 accepted_samples == written_samples == training_samples，不一致时停止。
 
-### 8. 生成报告
+`--amp-dtype bfloat16` 可在支持 BF16 的显卡上使用；`--compile` 可选择启用 `torch.compile`，首次编译会增加启动时间。DataLoader 使用 pinned memory 和 non-blocking GPU 传输。YOLO 训练支持自动批量大小或显存占比；抽取阶段会批量识别同局的头像裁剪，并对检测器暴露批量推理接口。
+
+### 9. 生成报告
 
 ~~~powershell
 uv run duel report --workspace G:\MAA-DuelChannel\workspace
@@ -185,6 +235,16 @@ uv run duel report --workspace G:\MAA-DuelChannel\workspace
 ## 数据契约
 
 RoundSample 保存视频哈希、局序号、四个阶段时间戳、三张证据帧、双方 roster、双方 unit、胜方、置信度、审核状态和流水线版本。
+
+数据与模型使用 `contract_version = 1.0.0`：
+
+- Platform 导出清单：`review\platform\<export-id>\annotation-manifest.jsonl`
+- 人工标注版本：`annotations\versions\<version>\dataset.json`
+- 训练数据版本：`datasets\<version>\dataset.json`
+- YOLO 模型版本：`models\vision\<task>\<model-version>\model.json`
+- Transformer 模型版本：`models\predictor\versions\<model-version>\model.json`
+
+契约记录父版本、数据清单 SHA-256、任务与采样桶计数、基础权重、训练参数、精度、设备、checkpoint SHA-256 和 Git commit。`models\vision\<task>\weights\best.pt` 始终是当前部署副本，历史 checkpoint 保留在模型版本目录中。
 
 所有坐标相对有效游戏视口归一化到 [0, 1]：
 

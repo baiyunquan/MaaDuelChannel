@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from maa_duel.contracts import DatasetVersion, git_commit, sha256_file, write_contract
 from maa_duel.review import ReviewStore
 from maa_duel.schema import ReviewStatus, RoundSample, Winner
 from maa_duel.store import read_jsonl, write_jsonl
@@ -59,11 +60,13 @@ def build_predictor_dataset(workspace: Path) -> list[PredictorSample]:
     output_path = manifest_dir / "predictor.jsonl"
     write_jsonl(output_path, rows)
     digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
+    dataset_version = f"predictor-{digest[:12]}"
     metadata = {
         "schema_version": 1,
         "accepted_samples": len(accepted),
         "written_samples": len(rows),
         "dataset_sha256": digest,
+        "dataset_version": dataset_version,
         "winner_counts": {
             "left": sum(row.winner is Winner.LEFT for row in rows),
             "right": sum(row.winner is Winner.RIGHT for row in rows),
@@ -75,4 +78,15 @@ def build_predictor_dataset(workspace: Path) -> list[PredictorSample]:
         json.dumps(metadata, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    source_manifest = manifest_dir / "rounds.auto.jsonl"
+    contract = DatasetVersion(
+        dataset_version=dataset_version,
+        annotation_manifest=output_path.relative_to(workspace).as_posix(),
+        annotation_sha256=sha256_file(output_path),
+        source_manifest_sha256=sha256_file(source_manifest),
+        task_counts={"predictor": len(rows)},
+        split_policy="all-training",
+        git_commit=git_commit(),
+    )
+    write_contract(workspace / "datasets" / dataset_version / "dataset.json", contract)
     return rows
