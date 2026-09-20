@@ -14,10 +14,11 @@ app.add_typer(assets_app, name="assets")
 def assets_sync(
     catalog: Annotated[Path, typer.Option(help="Enemy catalog CSV or JSON.")],
     workspace: Annotated[Path, typer.Option(help="External workspace directory.")],
+    background_dir: Annotated[Path | None, typer.Option(help="Directory containing clean arena backgrounds.")] = None,
 ) -> None:
     from maa_duel.assets import sync_assets
 
-    sync_assets(catalog, workspace)
+    sync_assets(catalog, workspace, background_dir=background_dir)
 
 
 @app.command()
@@ -95,3 +96,4 @@ def report(
     from maa_duel.reporting import write_report
 
     write_report(workspace)
+

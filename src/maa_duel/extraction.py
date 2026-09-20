@@ -252,7 +252,73 @@ class VideoExtractor:
         encoded.tofile(path)
 
 
-def extract_rounds(input_dir: Path, workspace: Path) -> None:
-    raise RuntimeError(
-        "runtime extraction requires trained vision models; run assets, synth, and train-vision before extract"
+def extract_rounds(input_dir: Path, workspace: Path) -> list[RoundSample]:
+    """Run extraction for every Green Vine video and replace the automatic manifest."""
+
+    from maa_duel.config import PipelineConfig
+    from maa_duel.store import read_jsonl, write_jsonl
+    from maa_duel.training.vision import YoloBattlefieldDetector, YoloPortraitClassifier
+    from maa_duel.video.inventory import Arena, VideoRecord, scan_inventory
+    from maa_duel.vision.health import HealthBarDetector
+    from maa_duel.vision.ocr import RapidOcrEngine
+    from maa_duel.vision.phase_analyzer import OcrPhaseAnalyzer
+    from maa_duel.vision.roster import RosterFrameRecognizer
+
+    roster_model = workspace / "models" / "vision" / "roster" / "weights" / "best.pt"
+    battlefield_model = workspace / "models" / "vision" / "battlefield" / "weights" / "best.pt"
+    required = (
+        ("roster model", roster_model),
+        ("battlefield model", battlefield_model),
+        ("roster class map", workspace / "synthetic" / "roster" / "class-map.json"),
+        ("battlefield class map", workspace / "synthetic" / "battlefield" / "class-map.json"),
     )
+    for label, path in required:
+        if not path.is_file():
+            raise FileNotFoundError(f"{label} is missing: {path}")
+
+    config = PipelineConfig(input_dir=input_dir, workspace_dir=workspace)
+    config.ensure_workspace()
+    video_manifest = config.manifest_dir / "videos.jsonl"
+    records = (
+        read_jsonl(video_manifest, VideoRecord)
+        if video_manifest.exists()
+        else scan_inventory(input_dir, video_manifest)
+    )
+    ocr = RapidOcrEngine()
+    extractor = VideoExtractor(
+        phase_analyzer=OcrPhaseAnalyzer(ocr),
+        roster_recognizer=RosterFrameRecognizer(
+            YoloPortraitClassifier(
+                roster_model,
+                workspace / "synthetic" / "roster" / "class-map.json",
+            ),
+            ocr,
+        ),
+        battlefield_detector=YoloBattlefieldDetector(
+            battlefield_model,
+            workspace / "synthetic" / "battlefield" / "class-map.json",
+        ),
+        health_detector=HealthBarDetector(),
+        scan_fps=config.sample_fps,
+        stable_winner_frames=config.stable_winner_frames,
+    )
+    samples: list[RoundSample] = []
+    errors: list[dict[str, str]] = []
+    for record in records:
+        if record.arena is not Arena.GREEN_VINE:
+            continue
+        path = input_dir / Path(record.relative_path)
+        source = SourceRef(video_relpath=record.relative_path, video_sha256=record.sha256)
+        try:
+            samples.extend(extractor.extract_video(path, source, workspace))
+        except (OSError, ValueError, RuntimeError) as exc:
+            errors.append({"video": record.relative_path, "error": str(exc)})
+
+    samples.sort(key=lambda item: (item.source.video_relpath.casefold(), item.round_index, item.timestamps.layout))
+    write_jsonl(config.manifest_dir / "rounds.auto.jsonl", samples)
+    error_path = config.report_dir / "extraction-errors.json"
+    import json
+
+    error_path.write_text(json.dumps(errors, ensure_ascii=False, indent=2), encoding="utf-8")
+    return samples
+

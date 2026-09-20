@@ -66,3 +66,18 @@ def test_assemble_round_sample_queues_low_confidence_result_for_review():
 
     assert sample.review_status is ReviewStatus.PENDING
     assert sample.failure_reasons
+
+
+def test_runtime_extraction_reports_missing_model_artifacts(tmp_path):
+    from maa_duel.extraction import extract_rounds
+
+    input_dir = tmp_path / "videos"
+    input_dir.mkdir()
+    workspace = tmp_path / "workspace"
+
+    try:
+        extract_rounds(input_dir, workspace)
+    except FileNotFoundError as exc:
+        assert "roster" in str(exc)
+    else:
+        raise AssertionError("missing trained models must stop extraction")
