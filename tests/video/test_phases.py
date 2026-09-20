@@ -77,3 +77,26 @@ def test_segmenter_infers_zero_window_when_one_disappears_before_round_banner():
 
     assert result.complete
     assert result.layout_time == pytest.approx(1.0)
+
+
+def test_segmenter_restarts_after_incomplete_round_when_countdown_rises():
+    signals = [
+        signal(0.0, countdown=3),
+        signal(0.5, countdown=1),
+        signal(1.1, layout_score=0.9),
+        signal(6.0, countdown=3),
+        signal(6.5, countdown=0),
+        signal(6.6, layout_score=0.8),
+        signal(7.2, round_number=2),
+        signal(8.0),
+    ]
+
+    rounds = RoundSegmenter().segment(signals)
+
+    assert len(rounds) == 2
+    assert not rounds[0].complete
+    assert "missing_round_banner" in rounds[0].failure_reasons
+    assert rounds[1].complete
+    assert rounds[1].prep_time == pytest.approx(6.0)
+    assert rounds[1].layout_time == pytest.approx(6.6)
+    assert rounds[1].battle_start == pytest.approx(7.2)

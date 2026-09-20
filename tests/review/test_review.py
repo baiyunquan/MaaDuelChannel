@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import numpy as np
+
 from maa_duel.review import ReviewCorrection, ReviewStore, apply_table_edits
 from maa_duel.schema import (
     AnnotationSource,
@@ -71,6 +73,16 @@ def test_review_store_overlays_manual_correction(tmp_path):
     assert store.load()[corrected.sample_id].note == "manual winner check"
 
 
+def test_review_store_keeps_manual_correction_when_auto_sample_disappears(tmp_path):
+    store = ReviewStore(tmp_path / "corrections.jsonl")
+    corrected = make_sample()
+    store.save(ReviewCorrection(sample=corrected, note="keep reviewed round"))
+
+    effective = store.overlay([])
+
+    assert effective == [corrected]
+
+
 def test_apply_table_edits_marks_units_manual_and_validates_acceptance():
     sample = make_sample(status=ReviewStatus.PENDING)
 
@@ -88,3 +100,29 @@ def test_apply_table_edits_marks_units_manual_and_validates_acceptance():
     assert edited.review_status is ReviewStatus.ACCEPTED
     assert edited.winner is Winner.RIGHT
     assert edited.left.units[0].source is AnnotationSource.MANUAL
+
+
+def test_apply_table_edits_accepts_array_rows_from_gradio():
+    sample = make_sample(status=ReviewStatus.PENDING)
+    roster_rows = np.array(
+        [["left", 1, 1, 1.0], ["right", 2, 1, 1.0]],
+        dtype=object,
+    )
+    unit_rows = np.array(
+        [
+            ["left", 1, 0.25, 0.4, 0.15, 0.2, 0.35, 0.4, 1.0],
+            ["right", 2, 0.75, 0.4, 0.65, 0.2, 0.85, 0.4, 1.0],
+        ],
+        dtype=object,
+    )
+
+    edited = apply_table_edits(
+        sample,
+        roster_rows=roster_rows,
+        unit_rows=unit_rows,
+        winner="left",
+        status=ReviewStatus.ACCEPTED,
+    )
+
+    assert edited.review_status is ReviewStatus.ACCEPTED
+    assert edited.left.roster[0].enemy_id == 1

@@ -52,6 +52,8 @@ def reconcile_detections(
     reasons: list[str] = []
 
     for side_name in ("left", "right"):
+        if not rosters[side_name]:
+            reasons.append(f"{side_name}:roster_empty")
         expected = _expected_counts(rosters[side_name])
         actual = Counter(item.enemy_id for item in raw_by_side[side_name])
         for enemy_id in sorted(actual.keys() - expected.keys()):

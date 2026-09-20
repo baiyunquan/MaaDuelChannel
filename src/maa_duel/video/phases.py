@@ -50,7 +50,19 @@ class RoundSegmenter:
             last_game_timestamp = item.timestamp
 
             if item.countdown_seconds is not None:
-                if active is not None and active.battle_start is not None:
+                countdown_restarted = (
+                    active is not None
+                    and item.countdown_seconds > 0
+                    and (
+                        active.zero_seen
+                        or active.layout_time is not None
+                        or (
+                            active.last_countdown_seconds is not None
+                            and item.countdown_seconds > active.last_countdown_seconds
+                        )
+                    )
+                )
+                if active is not None and (active.battle_start is not None or countdown_restarted):
                     rounds.append(self._finalize(active, item.timestamp))
                     active = None
                 if active is None:
@@ -97,6 +109,13 @@ class RoundSegmenter:
             reasons.append("missing_round_banner")
         if active.battle_start is not None and battle_end <= active.battle_start:
             reasons.append("missing_battle_frames")
+        timestamps = [
+            value
+            for value in (active.prep_time, active.layout_time, active.battle_start, battle_end)
+            if value is not None
+        ]
+        if timestamps != sorted(timestamps):
+            reasons.append("invalid_timestamp_order")
         return RoundWindow(
             round_index=active.observed_round_number or active.sequence_index,
             prep_time=active.prep_time,

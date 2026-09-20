@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,15 +94,16 @@ def _available(manifest, kind: str) -> list[tuple[EnemyAsset, Path]]:
     return values
 
 
-def generate_synthetic_dataset(
+def _generate_synthetic_dataset(
     workspace: Path,
+    output: Path,
+    final_output: Path,
     *,
     portrait_variants: int = 40,
     detection_images: int = 1000,
     seed: int = 20260920,
 ) -> SyntheticResult:
     manifest = load_asset_manifest(workspace / "assets" / "catalog.json")
-    output = workspace / "synthetic"
     rng = np.random.default_rng(seed)
     available_portraits = _available(manifest, "portrait")
     available_animations = _available(manifest, "animation")
@@ -110,14 +115,22 @@ def generate_synthetic_dataset(
     for class_position, (enemy, relative_path) in enumerate(available_portraits):
         roster_map[str(class_position)] = enemy.enemy_id
         image = _read_image(workspace / relative_path)
-        class_dir = output / "roster" / "train" / f"{enemy.enemy_id:04d}"
-        class_dir.mkdir(parents=True, exist_ok=True)
+        train_class_dir = output / "roster" / "train" / f"{enemy.enemy_id:04d}"
+        val_class_dir = output / "roster" / "val" / f"{enemy.enemy_id:04d}"
+        train_class_dir.mkdir(parents=True, exist_ok=True)
+        val_class_dir.mkdir(parents=True, exist_ok=True)
         for variant in range(portrait_variants):
             augmented = _augment_portrait(image, rng)
-            destination = class_dir / f"{enemy.enemy_id:04d}-{variant:04d}.jpg"
+            filename = f"{enemy.enemy_id:04d}-{variant:04d}.jpg"
+            destination = train_class_dir / filename
             cv2.imencode(".jpg", augmented, [cv2.IMWRITE_JPEG_QUALITY, int(rng.integers(65, 96))])[1].tofile(
                 destination
             )
+            val_destination = val_class_dir / filename
+            try:
+                os.link(destination, val_destination)
+            except OSError:
+                shutil.copy2(destination, val_destination)
             portrait_count += 1
     (output / "roster").mkdir(parents=True, exist_ok=True)
     (output / "roster" / "class-map.json").write_text(
@@ -176,7 +189,7 @@ def generate_synthetic_dataset(
             produced_detection_images += 1
 
     dataset_config = {
-        "path": str((output / "battlefield").resolve()),
+        "path": str((final_output / "battlefield").resolve()),
         "train": "images/train",
         "val": "images/train",
         "names": {index: str(enemy_id) for enemy_id, index in class_index.items()},
@@ -198,3 +211,44 @@ def generate_synthetic_dataset(
         skipped_portraits=tuple(sorted(all_ids - portrait_ids)),
         skipped_animations=tuple(sorted(all_ids - animation_ids)),
     )
+
+
+def _replace_synthetic_directory(staged: Path, destination: Path) -> None:
+    workspace = destination.parent.resolve()
+    if destination.name != "synthetic" or staged.parent.parent.resolve() != workspace:
+        raise ValueError("synthetic replacement paths must stay directly under the workspace")
+    backup = workspace / f".synthetic-backup-{uuid.uuid4().hex}"
+    had_previous = destination.exists()
+    if had_previous:
+        destination.rename(backup)
+    try:
+        staged.rename(destination)
+    except Exception:
+        if had_previous and backup.exists() and not destination.exists():
+            backup.rename(destination)
+        raise
+    if backup.exists():
+        shutil.rmtree(backup)
+
+
+def generate_synthetic_dataset(
+    workspace: Path,
+    *,
+    portrait_variants: int = 40,
+    detection_images: int = 1000,
+    seed: int = 20260920,
+) -> SyntheticResult:
+    workspace.mkdir(parents=True, exist_ok=True)
+    final_output = workspace / "synthetic"
+    with tempfile.TemporaryDirectory(prefix=".synthetic-build-", dir=workspace) as temporary:
+        staged = Path(temporary) / "synthetic"
+        result = _generate_synthetic_dataset(
+            workspace,
+            staged,
+            final_output,
+            portrait_variants=portrait_variants,
+            detection_images=detection_images,
+            seed=seed,
+        )
+        _replace_synthetic_directory(staged, final_output)
+    return result

@@ -1,4 +1,4 @@
-from maa_duel.extraction import assemble_round_sample
+from maa_duel.extraction import assemble_round_sample, stable_sample_id
 from maa_duel.schema import BoundingBox, ReviewStatus, RosterEntry, SourceRef, Winner
 from maa_duel.video.phases import RoundWindow
 from maa_duel.vision.layout import RawDetection
@@ -47,6 +47,12 @@ def test_assemble_round_sample_auto_accepts_consistent_high_confidence_round():
     assert len(sample.sample_id) == 32
 
 
+def test_sample_id_does_not_change_when_layout_evidence_time_moves():
+    source = SourceRef(video_relpath="green/video.mp4", video_sha256="d" * 64)
+
+    assert stable_sample_id(source, 3, 12.1) == stable_sample_id(source, 3, 12.6)
+
+
 def test_assemble_round_sample_queues_low_confidence_result_for_review():
     window = RoundWindow(1, 1.0, 2.0, 3.0, 4.0, True, ())
     source = SourceRef(video_relpath="x.mp4", video_sha256="b" * 64)
@@ -66,6 +72,25 @@ def test_assemble_round_sample_queues_low_confidence_result_for_review():
 
     assert sample.review_status is ReviewStatus.PENDING
     assert sample.failure_reasons
+
+
+def test_assemble_round_sample_keeps_empty_rosters_pending():
+    window = RoundWindow(1, 1.0, 2.0, 3.0, 4.0, True, ())
+    source = SourceRef(video_relpath="x.mp4", video_sha256="c" * 64)
+
+    sample = assemble_round_sample(
+        source=source,
+        window=window,
+        rosters={"left": [], "right": []},
+        detections=[],
+        winner=Winner.LEFT,
+        winner_confidence=0.9,
+        evidence={},
+    )
+
+    assert sample.review_status is ReviewStatus.PENDING
+    assert "left:roster_empty" in sample.failure_reasons
+    assert "right:roster_empty" in sample.failure_reasons
 
 
 def test_runtime_extraction_reports_missing_model_artifacts(tmp_path):

@@ -61,6 +61,53 @@ class FakeHealthDetector:
         return HealthCounts(orange=1, blue=0)
 
 
+class IncompletePhaseAnalyzer:
+    def analyze(self, frame, timestamp):
+        if timestamp < 0.4:
+            return FrameSignals(timestamp, True, countdown_seconds=1)
+        if timestamp < 0.8:
+            return FrameSignals(timestamp, True, round_number=1)
+        return FrameSignals(timestamp, True)
+
+
+class TwoWindowPhaseAnalyzer:
+    def analyze(self, frame, timestamp):
+        if timestamp < 0.2:
+            return FrameSignals(timestamp, True, countdown_seconds=2)
+        if timestamp < 0.4:
+            return FrameSignals(timestamp, True, countdown_seconds=1)
+        if timestamp < 0.6:
+            return FrameSignals(timestamp, True, countdown_seconds=0)
+        if timestamp < 0.8:
+            return FrameSignals(timestamp, True, layout_score=0.9)
+        if timestamp < 1.0:
+            return FrameSignals(timestamp, True, round_number=1)
+        if timestamp < 2.0:
+            return FrameSignals(timestamp, True)
+        if timestamp < 2.2:
+            return FrameSignals(timestamp, True, countdown_seconds=2)
+        if timestamp < 2.4:
+            return FrameSignals(timestamp, True, countdown_seconds=1)
+        if timestamp < 2.6:
+            return FrameSignals(timestamp, True, countdown_seconds=0)
+        if timestamp < 2.8:
+            return FrameSignals(timestamp, True, layout_score=0.9)
+        if timestamp < 3.0:
+            return FrameSignals(timestamp, True, round_number=2)
+        return FrameSignals(timestamp, True)
+
+
+class FailingSecondBattlefieldDetector(FakeBattlefieldDetector):
+    def __init__(self):
+        self.calls = 0
+
+    def detect(self, frame):
+        self.calls += 1
+        if self.calls == 2:
+            raise ValueError("second layout is unreadable")
+        return super().detect(frame)
+
+
 def test_video_extractor_runs_two_pass_pipeline_and_writes_evidence(tmp_path):
     video = tmp_path / "source.mp4"
     write_video(video)
@@ -82,3 +129,51 @@ def test_video_extractor_runs_two_pass_pipeline_and_writes_evidence(tmp_path):
     assert Path(tmp_path / "workspace" / samples[0].evidence.prep).is_file()
     assert Path(tmp_path / "workspace" / samples[0].evidence.layout).is_file()
     assert Path(tmp_path / "workspace" / samples[0].evidence.end).is_file()
+
+
+def test_video_extractor_records_incomplete_windows(tmp_path):
+    video = tmp_path / "source.mp4"
+    write_video(video)
+    extractor = VideoExtractor(
+        phase_analyzer=IncompletePhaseAnalyzer(),
+        roster_recognizer=FakeRosterRecognizer(),
+        battlefield_detector=FakeBattlefieldDetector(),
+        health_detector=FakeHealthDetector(),
+        scan_fps=5.0,
+    )
+
+    samples = extractor.extract_video(
+        video,
+        SourceRef(video_relpath="source.mp4", video_sha256="b" * 64),
+        tmp_path / "workspace",
+    )
+
+    assert samples == []
+    assert len(extractor.issues) == 1
+    assert extractor.issues[0].kind == "incomplete_window"
+    assert "missing_layout" in extractor.issues[0].detail
+
+
+def test_video_extractor_keeps_successful_round_when_later_round_fails(tmp_path):
+    video = tmp_path / "source.mp4"
+    write_video(video)
+    extractor = VideoExtractor(
+        phase_analyzer=TwoWindowPhaseAnalyzer(),
+        roster_recognizer=FakeRosterRecognizer(),
+        battlefield_detector=FailingSecondBattlefieldDetector(),
+        health_detector=FakeHealthDetector(),
+        scan_fps=5.0,
+        stable_winner_frames=3,
+    )
+
+    samples = extractor.extract_video(
+        video,
+        SourceRef(video_relpath="source.mp4", video_sha256="c" * 64),
+        tmp_path / "workspace",
+    )
+
+    assert len(samples) == 1
+    assert samples[0].round_index == 1
+    assert len(extractor.issues) == 1
+    assert extractor.issues[0].round_index == 2
+    assert extractor.issues[0].kind == "window_error"

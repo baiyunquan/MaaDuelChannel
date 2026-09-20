@@ -89,7 +89,7 @@ uv run duel scan --input-dir G:\MAA-DuelChannel\training-data --workspace G:\MAA
 uv run duel synth --workspace G:\MAA-DuelChannel\workspace --portrait-variants 40 --detection-images 1000 --seed 20260920
 ~~~
 
-头像数据写入 YOLO classification 的单一 train 集；战场数据写入 YOLO detection 的单一 train 集。为满足 Ultralytics 数据格式，检测数据的 val 指向同一目录，但训练时显式 val=False，不会建立或保留验证集。
+头像和战场数据都只生成一套训练样本。Ultralytics classification 初始化时强制要求 `val` 目录，因此头像数据用硬链接（不支持时复制）建立与 train 完全相同的兼容视图；战场数据的 val 也指向 train。它们都不是留出集，报告中的验证结果仍然只能视作训练集拟合结果。每次生成先写入临时目录，完成后整体替换 synthetic，旧类别和旧图片不会混入新数据。
 
 ### 3. 训练两个视觉模型
 
@@ -102,6 +102,7 @@ uv run duel train-vision battlefield --workspace G:\MAA-DuelChannel\workspace --
 - battlefield：倒计时归零后、ROUND 遮罩出现前的敌人检测。
 - 数量由 RapidOCR 识别。
 - 战场框的底边中心作为单位站位。
+- Ultralytics 基础权重下载到 workspace\models\base，不会写入命令的当前目录。
 
 ### 4. 提取对局
 
@@ -118,7 +119,7 @@ uv run duel extract --input-dir G:\MAA-DuelChannel\training-data --workspace G:\
 5. 连续追踪橙色与蓝色血条，稳定消失的一方判负。
 6. 高置信且完全一致的样本自动 accepted；其余样本进入 pending。
 
-自动结果写入 manifests\rounds.auto.jsonl。重复提取可以覆盖自动结果，不会覆盖 review\corrections.jsonl 中的人工修正。
+自动结果写入 manifests\rounds.auto.jsonl。不完整窗口和单局识别错误写入 reports\extraction-errors.json，同视频中已经成功提取的局仍会保留。重复提取可以覆盖自动结果，不会覆盖 review\corrections.jsonl 中的人工修正。
 
 ### 5. 人工审核
 
@@ -127,6 +128,8 @@ uv run duel review --workspace G:\MAA-DuelChannel\workspace
 ~~~
 
 浏览器界面同时显示准备帧、标注后的站位帧和结束证据帧。可以编辑双方清单、单位落脚点和框、胜方以及审核备注。人工接受时会再次验证每一方各类型的清单数量与单位数量完全相等。
+
+样本身份由视频 SHA-256 和局序号决定，不依赖证据帧的具体时间。某局在一次自动重提取中暂时缺失时，已经保存的人工审核结果仍会进入有效数据集。
 
 ### 6. 构建 Transformer 数据集
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import cv2
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from maa_duel.schema import (
@@ -52,27 +53,30 @@ class ReviewStore:
 
     def overlay(self, automatic: list[RoundSample]) -> list[RoundSample]:
         corrections = self.load()
-        return [
+        effective = [
             corrections[sample.sample_id].sample if sample.sample_id in corrections else sample for sample in automatic
         ]
+        automatic_ids = {sample.sample_id for sample in automatic}
+        effective.extend(corrections[sample_id].sample for sample_id in sorted(corrections.keys() - automatic_ids))
+        return effective
 
 
 def apply_table_edits(
     sample: RoundSample,
     *,
-    roster_rows: list[list[object]],
-    unit_rows: list[list[object]],
+    roster_rows: object,
+    unit_rows: object,
     winner: str | None,
     status: ReviewStatus,
 ) -> RoundSample:
     rosters: dict[str, list[RosterEntry]] = {"left": [], "right": []}
     units: dict[str, list[UnitDetection]] = {"left": [], "right": []}
-    for row in roster_rows:
+    for row in _table_rows(roster_rows):
         if not row or row[0] not in rosters:
             continue
         side = str(row[0])
         rosters[side].append(RosterEntry(enemy_id=int(row[1]), count=int(row[2]), confidence=float(row[3])))
-    for row in unit_rows:
+    for row in _table_rows(unit_rows):
         if not row or row[0] not in units:
             continue
         side = str(row[0])
@@ -96,6 +100,16 @@ def apply_table_edits(
         payload["failure_reasons"] = []
         payload["winner_confidence"] = 1.0
     return RoundSample.model_validate(payload)
+
+
+def _table_rows(value: object) -> list[list[object]]:
+    if value is None:
+        return []
+    if hasattr(value, "to_numpy"):
+        value = value.to_numpy()
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    return [list(row) for row in value]
 
 
 def _roster_rows(sample: RoundSample) -> list[list[object]]:
@@ -128,7 +142,7 @@ def _annotated_layout(workspace: Path, sample: RoundSample):
     if not sample.evidence.layout:
         return None
     path = workspace / sample.evidence.layout
-    image = cv2.imdecode(__import__("numpy").fromfile(path, dtype="uint8"), cv2.IMREAD_COLOR)
+    image = cv2.imdecode(np.fromfile(path, dtype="uint8"), cv2.IMREAD_COLOR)
     if image is None:
         return None
     height, width = image.shape[:2]
@@ -187,8 +201,8 @@ def launch_review(workspace: Path) -> None:
         status = ReviewStatus.ACCEPTED if accepted else ReviewStatus.REJECTED
         edited = apply_table_edits(
             samples[index],
-            roster_rows=roster_rows or [],
-            unit_rows=unit_rows or [],
+            roster_rows=roster_rows,
+            unit_rows=unit_rows,
             winner=winner,
             status=status,
         )
@@ -207,11 +221,13 @@ def launch_review(workspace: Path) -> None:
         roster = gr.Dataframe(
             headers=["side", "enemy_id", "count", "confidence"],
             datatype=["str", "number", "number", "number"],
+            type="array",
             label="Roster",
         )
         units = gr.Dataframe(
             headers=["side", "enemy_id", "x", "y", "x1", "y1", "x2", "y2", "confidence"],
             datatype=["str", "number", "number", "number", "number", "number", "number", "number", "number"],
+            type="array",
             label="Units and boxes",
         )
         winner = gr.Dropdown(["left", "right"], label="Winner")

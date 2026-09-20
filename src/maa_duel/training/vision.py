@@ -99,7 +99,12 @@ def train_vision_model(
     except ImportError as exc:
         raise RuntimeError("Ultralytics is not installed; install the vision extra") from exc
 
-    model_name = base_model or ("yolo11n-cls.pt" if task == "roster" else "yolo11n.pt")
+    if base_model is None:
+        base_dir = workspace / "models" / "base"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        model_name = str(base_dir / ("yolo11n-cls.pt" if task == "roster" else "yolo11n.pt"))
+    else:
+        model_name = base_model
     data = (
         workspace / "synthetic" / "roster"
         if task == "roster"

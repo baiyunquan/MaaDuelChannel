@@ -144,9 +144,16 @@ def fuse_roster_observations(
             count_votes[value.count] += value.count_confidence
         enemy_id = max(type_votes, key=type_votes.get)
         count = max(count_votes, key=count_votes.get)
-        type_confidence = type_votes[enemy_id] / sum(type_votes.values())
-        count_confidence = count_votes[count] / sum(count_votes.values())
-        confidence = min(type_confidence, count_confidence)
+        type_agreement = type_votes[enemy_id] / sum(type_votes.values())
+        count_agreement = count_votes[count] / sum(count_votes.values())
+        selected_type_confidences = [value.type_confidence for value in values if value.enemy_id == enemy_id]
+        selected_count_confidences = [value.count_confidence for value in values if value.count == count]
+        confidence = min(
+            type_agreement,
+            count_agreement,
+            sum(selected_type_confidences) / len(selected_type_confidences),
+            sum(selected_count_confidences) / len(selected_count_confidences),
+        )
         if confidence >= minimum_confidence:
             by_side[side].append(RosterEntry(enemy_id=enemy_id, count=count, confidence=min(confidence, 1.0)))
     return by_side

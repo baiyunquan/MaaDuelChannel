@@ -21,6 +21,16 @@ def test_roster_fusion_uses_weighted_type_vote_and_count_mode():
     assert fused["left"][0].confidence > 0.7
 
 
+def test_roster_fusion_does_not_promote_one_low_confidence_observation():
+    observations = [
+        RosterObservation("left", 0, enemy_id=7, count=3, type_confidence=0.26, count_confidence=0.26),
+    ]
+
+    fused = fuse_roster_observations(observations)
+
+    assert fused["left"][0].confidence == 0.26
+
+
 def test_health_detector_counts_synthetic_orange_and_blue_bars():
     image = np.zeros((200, 300, 3), dtype=np.uint8)
     cv2.rectangle(image, (60, 50), (120, 56), (0, 140, 255), thickness=-1)

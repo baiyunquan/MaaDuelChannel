@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -39,8 +40,15 @@ class HealthDetector(Protocol):
     def count(self, frame: np.ndarray) -> HealthCounts: ...
 
 
-def stable_sample_id(source: SourceRef, round_index: int, layout_time: float) -> str:
-    value = f"{source.video_sha256}:{round_index}:{layout_time:.3f}".encode()
+@dataclass(frozen=True)
+class ExtractionIssue:
+    round_index: int
+    kind: str
+    detail: str
+
+
+def stable_sample_id(source: SourceRef, round_index: int, _layout_time: float) -> str:
+    value = f"{source.video_sha256}:{round_index}".encode()
     return hashlib.blake2b(value, digest_size=16).hexdigest()
 
 
@@ -120,8 +128,10 @@ class VideoExtractor:
         self.health_detector = health_detector
         self.scan_fps = scan_fps
         self.stable_winner_frames = stable_winner_frames
+        self.issues: list[ExtractionIssue] = []
 
     def extract_video(self, video_path: Path, source: SourceRef, workspace: Path) -> list[RoundSample]:
+        self.issues = []
         signals = [
             self.phase_analyzer.analyze(frame, timestamp)
             for timestamp, frame in self._sample_video(video_path, start=0.0, end=None)
@@ -130,8 +140,24 @@ class VideoExtractor:
         samples: list[RoundSample] = []
         for window in windows:
             if not window.complete:
+                self.issues.append(
+                    ExtractionIssue(
+                        round_index=window.round_index,
+                        kind="incomplete_window",
+                        detail=",".join(window.failure_reasons),
+                    )
+                )
                 continue
-            samples.append(self._extract_window(video_path, source, workspace, window))
+            try:
+                samples.append(self._extract_window(video_path, source, workspace, window))
+            except (OSError, ValueError, RuntimeError) as exc:
+                self.issues.append(
+                    ExtractionIssue(
+                        round_index=window.round_index,
+                        kind="window_error",
+                        detail=str(exc),
+                    )
+                )
         return samples
 
     def _extract_window(
@@ -311,8 +337,17 @@ def extract_rounds(input_dir: Path, workspace: Path) -> list[RoundSample]:
         source = SourceRef(video_relpath=record.relative_path, video_sha256=record.sha256)
         try:
             samples.extend(extractor.extract_video(path, source, workspace))
+            errors.extend(
+                {
+                    "video": record.relative_path,
+                    "round_index": str(issue.round_index),
+                    "kind": issue.kind,
+                    "error": issue.detail,
+                }
+                for issue in extractor.issues
+            )
         except (OSError, ValueError, RuntimeError) as exc:
-            errors.append({"video": record.relative_path, "error": str(exc)})
+            errors.append({"video": record.relative_path, "kind": "video_error", "error": str(exc)})
 
     samples.sort(key=lambda item: (item.source.video_relpath.casefold(), item.round_index, item.timestamps.layout))
     write_jsonl(config.manifest_dir / "rounds.auto.jsonl", samples)

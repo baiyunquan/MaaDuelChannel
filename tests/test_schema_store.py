@@ -70,6 +70,29 @@ def test_accepted_sample_requires_roster_unit_consistency():
         )
 
 
+def test_roster_counts_accumulates_duplicate_enemy_entries():
+    side = SideData(
+        roster=[
+            RosterEntry(enemy_id=1, count=1, confidence=0.9),
+            RosterEntry(enemy_id=1, count=2, confidence=0.8),
+        ],
+        units=[],
+    )
+
+    assert side.roster_counts()[1] == 3
+
+
+def test_accepted_sample_requires_non_empty_teams():
+    sample = make_sample(ReviewStatus.PENDING)
+    payload = sample.model_dump(mode="json")
+    payload["left"] = SideData().model_dump(mode="json")
+    payload["right"] = SideData().model_dump(mode="json")
+    payload["review_status"] = ReviewStatus.ACCEPTED
+
+    with pytest.raises(ValidationError, match="non-empty roster"):
+        RoundSample.model_validate(payload)
+
+
 def test_coordinates_must_be_normalized():
     with pytest.raises(ValidationError):
         UnitDetection(

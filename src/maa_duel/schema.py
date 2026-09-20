@@ -65,7 +65,10 @@ class SideData(BaseModel):
     units: list[UnitDetection] = Field(default_factory=list)
 
     def roster_counts(self) -> Counter[int]:
-        return Counter({entry.enemy_id: entry.count for entry in self.roster})
+        counts: Counter[int] = Counter()
+        for entry in self.roster:
+            counts[entry.enemy_id] += entry.count
+        return counts
 
     def unit_counts(self) -> Counter[int]:
         return Counter(unit.enemy_id for unit in self.units)
@@ -126,6 +129,8 @@ class RoundSample(BaseModel):
             if self.winner is None:
                 raise ValueError("accepted sample requires a winner")
             for side_name, side in (("left", self.left), ("right", self.right)):
+                if not side.roster:
+                    raise ValueError(f"{side_name} requires a non-empty roster")
                 if side.roster_counts() != side.unit_counts():
                     raise ValueError(f"{side_name} roster counts must equal detected unit counts")
         return self
