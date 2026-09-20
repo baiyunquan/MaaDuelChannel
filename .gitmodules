@@ -1,0 +1,3 @@
+[submodule "vendor/ark_info_search"]
+	path = vendor/ark_info_search
+	url = https://github.com/baiyunquan/ark_info_search.git

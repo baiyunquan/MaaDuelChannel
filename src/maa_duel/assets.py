@@ -19,6 +19,22 @@ class AssetFile(BaseModel):
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class SpineVariant(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    skeleton: AssetFile
+    atlas: AssetFile
+    textures: list[AssetFile] = Field(default_factory=list)
+
+
+class SpinePackage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_page: str
+    variants: list[SpineVariant]
+
+
 class EnemyAsset(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -27,13 +43,15 @@ class EnemyAsset(BaseModel):
     original_name: str
     portrait: AssetFile | None = None
     animation: AssetFile | None = None
-    missing: list[Literal["portrait", "animation"]] = Field(default_factory=list)
+    battlefield_spine: SpinePackage | None = None
+    missing: list[Literal["portrait", "animation", "battlefield_spine"]] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
 
 
 class AssetManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     source_catalog: str
     source_catalog_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     enemies: list[EnemyAsset]
@@ -78,6 +96,9 @@ def sync_assets(catalog: Path, workspace: Path, *, background_dir: Path | None =
     asset_root = workspace / "assets"
     raw_root = asset_root / "raw"
     raw_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = asset_root / "catalog.json"
+    previous_manifest = load_asset_manifest(manifest_path) if manifest_path.is_file() else None
+    previous_enemies = {enemy.enemy_id: enemy for enemy in previous_manifest.enemies} if previous_manifest else {}
     enemies: list[EnemyAsset] = []
     seen_ids: set[int] = set()
 
@@ -91,6 +112,7 @@ def sync_assets(catalog: Path, workspace: Path, *, background_dir: Path | None =
         seen_ids.add(enemy_id)
         name = _first(row, "name", "名称") or str(enemy_id)
         original_name = _first(row, "original_name", "原始名称") or name
+        previous_enemy = previous_enemies.get(enemy_id)
         files: dict[str, AssetFile | None] = {"portrait": None, "animation": None}
         missing: list[Literal["portrait", "animation"]] = []
 
@@ -118,11 +140,13 @@ def sync_assets(catalog: Path, workspace: Path, *, background_dir: Path | None =
                 original_name=original_name,
                 portrait=files["portrait"],
                 animation=files["animation"],
+                battlefield_spine=previous_enemy.battlefield_spine if previous_enemy else None,
                 missing=missing,
+                errors=previous_enemy.errors if previous_enemy else [],
             )
         )
 
-    backgrounds: list[AssetFile] = []
+    backgrounds = previous_manifest.backgrounds.copy() if previous_manifest and background_dir is None else []
     if background_dir is not None:
         for source_path in sorted(background_dir.resolve(strict=True).iterdir()):
             if not source_path.is_file() or source_path.suffix.casefold() not in {".png", ".jpg", ".jpeg", ".webp"}:
@@ -146,7 +170,6 @@ def sync_assets(catalog: Path, workspace: Path, *, background_dir: Path | None =
         enemies=sorted(enemies, key=lambda item: item.enemy_id),
         backgrounds=backgrounds,
     )
-    manifest_path = asset_root / "catalog.json"
     manifest_path.write_text(manifest.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
     return manifest
 

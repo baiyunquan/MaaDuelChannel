@@ -44,6 +44,10 @@ def write_report(workspace: Path) -> Path:
             "enemies": len(assets.enemies),
             "portraits": sum(enemy.portrait is not None for enemy in assets.enemies),
             "animations": sum(enemy.animation is not None for enemy in assets.enemies),
+            "battlefield_spine_packages": sum(enemy.battlefield_spine is not None for enemy in assets.enemies),
+            "battlefield_spine_variants": sum(
+                len(enemy.battlefield_spine.variants) for enemy in assets.enemies if enemy.battlefield_spine is not None
+            ),
             "backgrounds": len(assets.backgrounds),
         }
 

@@ -60,10 +60,25 @@ CSV 或 JSON 必须为每个敌人提供稳定的正整数 id。CSV 支持以下
 |---|---|
 | 显示名 | name、名称 |
 | 原始名 | original_name、原始名称 |
-| 头像 | portrait、portrait_url、头像 |
-| 动画 | animation、animation_url、动画 |
+| 选手缩略图 | portrait、portrait_url、头像 |
+| 可直接合成的动画/精灵图 | animation、animation_url、动画 |
+| PRTS Spine 查询名 | original_name、原始名称 |
 
-头像和动画可以是相对 CSV 的本地路径，也可以是 HTTP(S) URL。同步结果记录来源 URI 和 SHA-256。仓库不包含 CannotMax 的代码或素材；参考格式见 examples/catalog.example.csv。
+选手缩略图与战场模型是不同素材：`portrait` 只用于准备阶段头像分类；`battlefield_spine` 保存战场 Spine 骨骼、atlas 和 atlas 引用的纹理；`animation` 仍表示可被合成器直接读取的图片或视频。三者在 manifest 与磁盘目录里分开记录。
+
+`portrait` 和 `animation` 可以是相对 CSV 的本地路径，也可以是 HTTP(S) URL。同步结果记录来源 URI 和 SHA-256。普通素材格式见 examples/catalog.example.csv；PRTS 查询表格式见 examples/prts-catalog.example.csv。仓库不包含 CannotMax 的代码或下载来的游戏素材。
+
+`vendor/ark_info_search` 是固定版本的 Git submodule，提供 PRTS MediaWiki API 的参考实现。该项目采用 AGPL-3.0；MaaDuelChannel 不导入它的 Python 代码，资源下载器在 `src/maa_duel/prts_assets.py` 中单独实现 PRTS 查询和 Spine 文件解析。
+
+把 PRTS 原名（保留名字中的引号和标点）写入 `original_name` 后，运行：
+
+~~~powershell
+uv run duel assets fetch-prts --catalog G:\MAA-DuelChannel\workspace\manifests\greenvine-prts-catalog.csv --workspace G:\MAA-DuelChannel\workspace
+~~~
+
+目录结构为 `assets/portraits/<id>/thumbnail.png` 和 `assets/battlefield_spine/<id>/variant-*/`。后者每个战斗姿态单独保存 `.skel`、`.atlas`、纹理，并在 `assets/catalog.json` 中记录 PRTS 页面/文件 URL 与 SHA-256；重复运行会复用同 URL 的本地文件，`--force` 可强制更新。PRTS 为 78 个绿藤城敌人提供头像页和 Spine 页面；下载结果会逐项报告缺失项。
+
+PRTS 页面说明游戏图片、动画等版权归鹰角网络及其关联公司所有。此命令只把素材写入外部 workspace，不会把图片或模型加入 Git；见 [PRTS 版权说明](https://prts.wiki/w/PRTS:%E7%89%88%E6%9D%83)。
 
 准备一张或多张无单位的绿藤城背景，然后同步素材：
 
@@ -72,6 +87,8 @@ uv run duel assets sync --catalog C:\path\to\green-vine-catalog.csv --background
 ~~~
 
 workspace\assets\catalog.json 会列出缺少头像或动画的敌人。涉及缺失类别的自动样本需要补素材或人工审核。
+
+当前 `synth` 可以读取 `animation` 图片/视频；它还不会把 `.skel`/`.atlas` 渲染成动画帧。PRTS Spine 资源先作为独立、可追溯的源文件保存，不能当成选手缩略图或普通静态图片送入合成器。
 
 ## 完整流程
 

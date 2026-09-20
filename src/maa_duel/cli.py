@@ -22,6 +22,33 @@ def assets_sync(
     typer.echo(f"Synced {len(manifest.enemies)} enemies to {workspace / 'assets'}")
 
 
+@assets_app.command("fetch-prts")
+def assets_fetch_prts(
+    catalog: Annotated[Path, typer.Option(help="CSV or JSON with id, name, and exact PRTS original_name.")],
+    workspace: Annotated[Path, typer.Option(help="External workspace directory.")],
+    force: Annotated[bool, typer.Option(help="Redownload files even when the source URL is unchanged.")] = False,
+    request_interval: Annotated[
+        float, typer.Option(min=0.0, max=10.0, help="Delay between PRTS requests in seconds.")
+    ] = 0.25,
+) -> None:
+    from maa_duel.prts_assets import sync_prts_assets
+
+    result = sync_prts_assets(catalog, workspace, force=force, request_interval=request_interval)
+    typer.echo(
+        f"Fetched {result.portrait_count}/{len(result.manifest.enemies)} thumbnails and "
+        f"{result.spine_package_count}/{len(result.manifest.enemies)} battlefield Spine packages "
+        f"({result.spine_variant_count} battle variants) to {workspace / 'assets'}"
+    )
+    if result.missing_portrait_ids:
+        typer.echo(f"Missing thumbnails for enemy IDs: {', '.join(map(str, result.missing_portrait_ids))}", err=True)
+    if result.missing_spine_ids:
+        typer.echo(f"Missing Spine packages for enemy IDs: {', '.join(map(str, result.missing_spine_ids))}", err=True)
+    for error in result.errors:
+        typer.echo(error, err=True)
+    if result.missing_portrait_ids or result.missing_spine_ids or result.errors:
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def scan(
     input_dir: Annotated[Path, typer.Option(exists=True, file_okay=False)],
