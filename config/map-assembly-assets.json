@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "flatbufferRootOffset": 128,
+  "tilePrefabs": {
+    "bundle": "battle/prefabs/[uc]tiles.ab",
+    "byKey": {
+      "tile_infection_dqq": "dyn/battle/prefabs/[uc]tiles/tile_infection_dqq.prefab",
+      "tile_forbidden": "dyn/battle/prefabs/[uc]tiles/tile_forbidden.prefab",
+      "tile_start_dqq": "dyn/battle/prefabs/[uc]tiles/tile_start_dqq.prefab",
+      "tile_end_dqq": "dyn/battle/prefabs/[uc]tiles/tile_end_dqq.prefab"
+    }
+  },
+  "routeEffects": [
+    {
+      "name": "tile_start",
+      "bundle": "battle/prefabs/effects/tile.ab",
+      "assetPath": "dyn/battle/prefabs/effects/tile_start.prefab"
+    },
+    {
+      "name": "tile_end",
+      "bundle": "battle/prefabs/effects/tile.ab",
+      "assetPath": "dyn/battle/prefabs/effects/tile_end.prefab"
+    },
+    {
+      "name": "tile_end_multiplayer_01",
+      "bundle": "battle/prefabs/effects/tile.ab",
+      "assetPath": "dyn/battle/prefabs/effects/tile_end_multiplayer_01.prefab"
+    },
+    {
+      "name": "tile_end_multiplayer_02",
+      "bundle": "battle/prefabs/effects/tile.ab",
+      "assetPath": "dyn/battle/prefabs/effects/tile_end_multiplayer_02.prefab"
+    },
+    {
+      "name": "tile_end_multiplayer_03",
+      "bundle": "battle/prefabs/effects/tile.ab",
+      "assetPath": "dyn/battle/prefabs/effects/tile_end_multiplayer_03.prefab"
+    },
+    {
+      "name": "tile_end_multiplayer_04",
+      "bundle": "battle/prefabs/effects/tile.ab",
+      "assetPath": "dyn/battle/prefabs/effects/tile_end_multiplayer_04.prefab"
+    },
+    {
+      "name": "tile_end_multiplayer_05",
+      "bundle": "battle/prefabs/effects/tile.ab",
+      "assetPath": "dyn/battle/prefabs/effects/tile_end_multiplayer_05.prefab"
+    },
+    {
+      "name": "tile_end_multiplayer_05_arrow_in",
+      "bundle": "battle/prefabs/effects/tile.ab",
+      "assetPath": "dyn/battle/prefabs/effects/tile_end_multiplayer_05_arrow_in.prefab"
+    },
+    {
+      "name": "tile_end_multiplayer_05_arrow_out",
+      "bundle": "battle/prefabs/effects/tile.ab",
+      "assetPath": "dyn/battle/prefabs/effects/tile_end_multiplayer_05_arrow_out.prefab"
+    }
+  ],
+  "themes": {
+    "LMC_DAY": {
+      "resourceBundles": [
+        "arts/maps/map_lm_center/res.ab",
+        "arts/maps/map_battleground/res.ab",
+        "arts/maps/multi_player/res.ab",
+        "arts/maps/common/res.ab"
+      ],
+      "environmentRoots": [
+        {
+          "name": "lmc-background",
+          "bundle": "arts/maps/map_lm_center/background_mesh/bg_lmc.ab",
+          "assetPath": "dyn/arts/maps/map_lm_center/background_mesh/bg_lmc.fbx",
+          "layer": "environment"
+        },
+        {
+          "name": "battleground-background",
+          "bundle": "arts/maps/map_battleground/background_mesh/bg_battleground.ab",
+          "assetPath": "dyn/arts/maps/map_battleground/background_mesh/bg_battleground.fbx",
+          "layer": "environment"
+        },
+        {
+          "name": "battleground-light-help",
+          "bundle": "arts/maps/map_battleground/background_mesh/light_help.ab",
+          "assetPath": "dyn/arts/maps/map_battleground/background_mesh/light_help.fbx",
+          "layer": "environment"
+        },
+        {
+          "name": "multiplayer-roof",
+          "bundle": "arts/maps/multi_player/background_mesh/bg_multi_player_roof.ab",
+          "assetPath": "dyn/arts/maps/multi_player/background_mesh/bg_multi_player_roof.fbx",
+          "layer": "environment"
+        },
+        {
+          "name": "multiplayer-fog-light",
+          "bundle": "arts/maps/multi_player/mesh/light_fog.ab",
+          "assetPath": "dyn/arts/maps/multi_player/mesh/light_fog.fbx",
+          "layer": "environment"
+        },
+        {
+          "name": "multiplayer-elevator-down",
+          "bundle": "arts/maps/multi_player/mesh/s_multi_trap_elevator_down.ab",
+          "assetPath": "dyn/arts/maps/multi_player/mesh/s_multi_trap_elevator_down.fbx",
+          "layer": "environment"
+        },
+        {
+          "name": "multiplayer-elevator-up",
+          "bundle": "arts/maps/multi_player/mesh/s_multi_trap_elevator_up.ab",
+          "assetPath": "dyn/arts/maps/multi_player/mesh/s_multi_trap_elevator_up.fbx",
+          "layer": "environment"
+        },
+        {
+          "name": "common-background",
+          "bundle": "arts/maps/common/meshes/s_background_common.ab",
+          "assetPath": "dyn/arts/maps/common/meshes/s_background_common.fbx",
+          "layer": "environment"
+        }
+      ]
+    }
+  }
+}

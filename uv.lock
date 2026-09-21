@@ -551,6 +551,7 @@ name = "maa-duel-channel"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "flatbuffers" },
     { name = "numpy" },
     { name = "opencv-python-headless" },
     { name = "pydantic" },
@@ -586,6 +587,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "flatbuffers", specifier = ">=25.12,<26" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "onnxruntime", marker = "extra == 'ocr'", specifier = ">=1.20" },
     { name = "opencv-python-headless", specifier = ">=4.10" },

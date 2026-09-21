@@ -46,7 +46,7 @@
 - Produces: an Editor-only Unity project at `unity/map-assembler`, opened with Unity Editor `2021.3.39f1`.
 - Consumes: the installed Editor at `D:\Unity\Hub\Editor\2021.3.39f1\Editor\Unity.exe`.
 
-- [ ] **Step 1: Pin the project Editor version**
+- [x] **Step 1: Pin the project Editor version**
 
 Create `ProjectSettings/ProjectVersion.txt` with:
 
@@ -54,7 +54,7 @@ Create `ProjectSettings/ProjectVersion.txt` with:
 m_EditorVersion: 2021.3.39f1
 ```
 
-- [ ] **Step 2: Create the package manifest and Editor-only assembly definition**
+- [x] **Step 2: Create the package manifest and Editor-only assembly definition**
 
 Use an empty package dependency object so Unity supplies only its built-in modules:
 
@@ -66,11 +66,11 @@ Use an empty package dependency object so Unity supplies only its built-in modul
 
 Set the assembly definition name to `MaaDuelChannel.MapAssembler.Editor` and `includePlatforms` to `Editor`.
 
-- [ ] **Step 3: Ignore Unity-generated files**
+- [x] **Step 3: Ignore Unity-generated files**
 
 Add these repository-relative ignores: `unity/map-assembler/Library/`, `Temp/`, `Obj/`, `Logs/`, `UserSettings/`, `Build/`.
 
-- [ ] **Step 4: Open the empty project in batch mode and inspect the Editor log**
+- [x] **Step 4: Open the empty project in batch mode and inspect the Editor log**
 
 Run:
 
@@ -94,23 +94,23 @@ Expected: Editor exits successfully and the project log contains no compile erro
 - The canonical JSON fields consumed by C# are `stageKey`, `theme`, `width`, `height`, `frameTime`, `grid`, `camera`, `bundleRoot`, `bundleFiles`, and `outputDirectory`.
 - Each grid item contains `row`, `column`, `tileIndex`, `tileKey`, `heightType`, `buildableType`, `passableMask`, and `playerSideMask`.
 
-- [ ] **Step 1: Define the Python request and cell records**
+- [x] **Step 1: Define the Python request and cell records**
 
 `MapAssemblyRequest` contains `stage_json: Path`, `camera_json: Path`, `game_assets: Path`, `output_dir: Path`, `stage_key: str`, `width: int = 1920`, `height: int = 864`, and `frame_time: float = 0.0`.
 
-- [ ] **Step 2: Decode every map index through `mapData.tiles`**
+- [x] **Step 2: Decode every map index through `mapData.tiles`**
 
 Load `mapData.map` as rows of integer indices. For each `(row, column, tile_index)`, index `mapData.tiles[tile_index]`; preserve source coordinates. Reject non-rectangular maps, invalid indices, or tile records without `tileKey`.
 
-- [ ] **Step 3: Read the camera profile and sibling theme summary**
+- [x] **Step 3: Read the camera profile and sibling theme summary**
 
 Select the exact `stage_key` from `maps.json`. Read `summary.json` beside it to resolve `theme`; fail if the key is absent from either input. Do not flip rows or reinterpret the profile vectors in Python.
 
-- [ ] **Step 4: Write canonical Unity input JSON**
+- [x] **Step 4: Write canonical Unity input JSON**
 
 Write UTF-8 JSON under a temporary run directory inside `output_dir`, including input file hashes and the resolved bundle paths. Return the config path from `prepare_assembly_input`.
 
-- [ ] **Step 5: Add the `duel assemble-map` command**
+- [x] **Step 5: Add the `duel assemble-map` command**
 
 Add options `--stage-json`, `--camera-json`, `--game-assets`, `--output-dir`, `--stage-key`, `--width`, `--height`, `--frame-time`, `--dry-run`, and optional `--unity-editor`. Have the command call `prepare_assembly_input` and then the Unity process runner; keep imports local as existing commands do. With `--dry-run`, print the parsed grid and resolved bundle plan without launching Unity.
 
@@ -128,23 +128,23 @@ Add options `--stage-json`, `--camera-json`, `--game-assets`, `--output-dir`, `-
 - `MapAssetPlan` contains ordered `bundle_files`, a `tile_prefab_by_key` mapping, environment roots, and per-file relative path plus SHA-256.
 - Consumes: the installed game’s `StreamingAssets/AB/Windows` and `PersistentData/Bundles` trees.
 
-- [ ] **Step 1: Declare the required tile and effect assets**
+- [x] **Step 1: Declare the required tile and effect assets**
 
 Record these exact bundle paths in `config/map-assembly-assets.json`: `battle/prefabs/[uc]tiles.ab` and `battle/prefabs/effects/tile.ab`. Map the stage keys to prefab paths under `dyn/battle/prefabs/[uc]tiles/`: `tile_infection_dqq`, `tile_forbidden`, `tile_start_dqq`, and `tile_end_dqq`.
 
-- [ ] **Step 2: Declare the VS-2 environment resource roots**
+- [x] **Step 2: Declare the VS-2 environment resource roots**
 
 Add theme `LMC_DAY` with the candidate roots `arts/maps/map_lm_center`, `arts/maps/map_battleground`, `arts/maps/multi_player`, and `arts/maps/common`. Enumerate each needed `res.ab`, mesh, and trap bundle from the extracted game inventory; do not load unrelated map themes.
 
-- [ ] **Step 3: Resolve hotfix precedence and verify each selected bundle**
+- [x] **Step 3: Resolve hotfix precedence and verify each selected bundle**
 
 Read `PersistentData/Bundles/hot_update_list.json`; when it names a selected relative bundle path, use the corresponding hotfix file, otherwise use StreamingAssets. Reject missing files and compute SHA-256 for every resolved path.
 
-- [ ] **Step 4: Resolve dependencies in load order**
+- [x] **Step 4: Resolve dependencies in load order**
 
 Read the `.idx` resource manifest from each asset root (`StreamingAssets/AB/Windows/*.idx` and `PersistentData/Bundles/*.idx`). Parse its `ResourceManifest.Bundles` and `ResourceManifest.AssetToBundleList` tables with the existing schema in `vendor/Ark-Unpacker/src/fbs/CN/resource_manifest.py`. Follow each bundle’s `AllDependencies` indices to add transitive shared material, texture, and shader bundles ahead of their consumers. Store the resolved order in `MapAssetPlan`; if an index entry or referenced bundle cannot be resolved, report its path and stop rather than skipping it.
 
-- [ ] **Step 5: Inspect the resulting asset plan from the CLI**
+- [x] **Step 5: Inspect the resulting asset plan from the CLI**
 
 Run the `duel assemble-map` command with the local inputs after `--dry-run` is added to the command. Expected summary: theme `LMC_DAY`, 15 columns, 11 rows, 165 cells, tile counts `99/48/9/9`, and existing resolved bundle files with their hashes. Do not launch Unity for dry-run.
 

@@ -12,6 +12,47 @@ app.add_typer(assets_app, name="assets")
 app.add_typer(annotate_app, name="annotate")
 
 
+@app.command("assemble-map")
+def assemble_map_command(
+    stage_json: Annotated[Path, typer.Option(exists=True, dir_okay=False, help="PRTS stage JSON.")],
+    camera_json: Annotated[Path, typer.Option(exists=True, dir_okay=False, help="PRTS map_camera_views/maps.json.")],
+    game_assets: Annotated[Path, typer.Option(exists=True, file_okay=False, help="Arknights_Data directory.")],
+    output_dir: Annotated[Path, typer.Option(file_okay=False, help="External output directory.")],
+    stage_key: Annotated[
+        str, typer.Option(help="Exact map camera key.")
+    ] = "activities/act1enemyduel/level_act1enemyduel_02a",
+    width: Annotated[int, typer.Option(min=1, help="Output image width.")] = 1920,
+    height: Annotated[int, typer.Option(min=1, help="Output image height.")] = 864,
+    frame_time: Annotated[float, typer.Option(min=0.0, help="Fixed animation sample time in seconds.")] = 0.0,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run/--run", help="Print resolved input without launching Unity.")
+    ] = False,
+    unity_editor: Annotated[Path | None, typer.Option(help="Optional Unity 2021.3.39f1 executable.")] = None,
+) -> None:
+    from maa_duel.map_assembly import MapAssemblyRequest, prepare_assembly_input, run_unity_assembler
+
+    request = MapAssemblyRequest(
+        stage_json=stage_json,
+        camera_json=camera_json,
+        game_assets=game_assets,
+        output_dir=output_dir,
+        stage_key=stage_key,
+        width=width,
+        height=height,
+        frame_time=frame_time,
+    )
+    try:
+        config_path = prepare_assembly_input(request)
+        if dry_run:
+            typer.echo(f"Assembly input: {config_path}")
+            typer.echo(config_path.read_text(encoding="utf-8"), nl=False)
+            return
+        run_unity_assembler(config_path, output_dir, unity_editor=unity_editor)
+    except (OSError, ValueError, RuntimeError) as error:
+        typer.echo(f"Map assembly failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+
 @assets_app.command("sync")
 def assets_sync(
     catalog: Annotated[Path, typer.Option(help="Enemy catalog CSV or JSON.")],
