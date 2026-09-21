@@ -308,6 +308,27 @@ def train_predictor(
     typer.echo(f"Trained on {result['training_samples']} samples; metrics are training-only")
 
 
+@app.command("predict-duel")
+def predict_duel_command(
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    input_path: Annotated[Path, typer.Option("--input", exists=True, dir_okay=False, help="BattleState JSON.")],
+    checkpoint: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    output: Annotated[Path | None, typer.Option(dir_okay=False, help="Optional prediction JSON output.")] = None,
+    device: Annotated[str | None, typer.Option(help="Torch device such as cuda or cpu.")] = None,
+    explain: Annotated[bool, typer.Option("--explain/--no-explain")] = False,
+) -> None:
+    from maa_duel.dataset import BattleState
+    from maa_duel.training.inference import predict_duel
+
+    state = BattleState.model_validate_json(input_path.read_text(encoding="utf-8"))
+    result = predict_duel(workspace, state, checkpoint=checkpoint, device=device, explain=explain)
+    payload = result.model_dump_json(indent=2) + "\n"
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(payload, encoding="utf-8")
+    typer.echo(payload, nl=False)
+
+
 @app.command()
 def report(
     workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],

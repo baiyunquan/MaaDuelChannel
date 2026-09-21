@@ -14,12 +14,18 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from maa_duel.combat import load_combat_knowledge
+from maa_duel.combat import DERIVED_FORMULA_VERSION, load_combat_knowledge
 from maa_duel.contracts import ModelVersion, sha256_file, write_contract
 from maa_duel.dataset import PredictorSample
 from maa_duel.schema import Winner
 from maa_duel.store import read_jsonl
-from maa_duel.training.features import COMBAT_FEATURE_DIM, CombatFeatureTable, build_combat_feature_table
+from maa_duel.training.derived import build_derived_battle_features, formula_sha256
+from maa_duel.training.features import (
+    CombatFeatureTable,
+    build_combat_feature_table,
+    feature_schema_sha256,
+    vocabulary_sha256,
+)
 from maa_duel.training.model import DuelTransformer, ModelConfig
 
 
@@ -29,16 +35,23 @@ class TensorBatch:
     left_positions: torch.Tensor
     left_combat: torch.Tensor
     left_combat_known: torch.Tensor
+    left_formation: torch.Tensor
     left_mask: torch.Tensor
     right_ids: torch.Tensor
     right_positions: torch.Tensor
     right_combat: torch.Tensor
     right_combat_known: torch.Tensor
+    right_formation: torch.Tensor
     right_mask: torch.Tensor
+    relations: torch.Tensor
+    relation_masks: torch.Tensor
     labels: torch.Tensor
 
     def to(self, device: torch.device, *, non_blocking: bool = False) -> TensorBatch:
         return TensorBatch(**{name: value.to(device, non_blocking=non_blocking) for name, value in vars(self).items()})
+
+    def model_inputs(self) -> dict[str, torch.Tensor]:
+        return {name: value for name, value in vars(self).items() if name != "labels"}
 
 
 class PredictorDataset(Dataset):
@@ -55,6 +68,8 @@ class PredictorDataset(Dataset):
 def collate_samples(samples: list[PredictorSample], combat_table: CombatFeatureTable | None = None) -> TensorBatch:
     if not samples:
         raise ValueError("cannot collate an empty batch")
+    if combat_table is None:
+        raise ValueError("combat-v2 collation requires a combat feature table")
     batch_size = len(samples)
     max_left = max(1, max(len(sample.left_units) for sample in samples))
     max_right = max(1, max(len(sample.right_units) for sample in samples))
@@ -62,7 +77,7 @@ def collate_samples(samples: list[PredictorSample], combat_table: CombatFeatureT
     right_ids = torch.zeros((batch_size, max_right), dtype=torch.long)
     left_positions = torch.zeros((batch_size, max_left, 2), dtype=torch.float32)
     right_positions = torch.zeros((batch_size, max_right, 2), dtype=torch.float32)
-    feature_dim = combat_table.features.shape[1] if combat_table else COMBAT_FEATURE_DIM
+    feature_dim = combat_table.features.shape[1]
     left_combat = torch.zeros((batch_size, max_left, feature_dim), dtype=torch.float32)
     right_combat = torch.zeros((batch_size, max_right, feature_dim), dtype=torch.float32)
     left_combat_known = torch.zeros((batch_size, max_left), dtype=torch.bool)
@@ -75,30 +90,45 @@ def collate_samples(samples: list[PredictorSample], combat_table: CombatFeatureT
         for unit_index, unit in enumerate(sample.left_units):
             left_ids[batch_index, unit_index] = unit.enemy_id
             left_positions[batch_index, unit_index] = torch.tensor((unit.x, unit.y))
-            if combat_table and unit.enemy_id < combat_table.features.shape[0]:
+            if unit.enemy_id < combat_table.features.shape[0]:
                 left_combat[batch_index, unit_index] = combat_table.features[unit.enemy_id]
                 left_combat_known[batch_index, unit_index] = combat_table.known[unit.enemy_id]
             left_mask[batch_index, unit_index] = True
         for unit_index, unit in enumerate(sample.right_units):
             right_ids[batch_index, unit_index] = unit.enemy_id
             right_positions[batch_index, unit_index] = torch.tensor((unit.x, unit.y))
-            if combat_table and unit.enemy_id < combat_table.features.shape[0]:
+            if unit.enemy_id < combat_table.features.shape[0]:
                 right_combat[batch_index, unit_index] = combat_table.features[unit.enemy_id]
                 right_combat_known[batch_index, unit_index] = combat_table.known[unit.enemy_id]
             right_mask[batch_index, unit_index] = True
         labels[batch_index] = 1.0 if sample.winner is Winner.LEFT else 0.0
 
+    combined_ids = torch.cat((left_ids, right_ids), dim=1)
+    combined_positions = torch.cat((left_positions, right_positions), dim=1)
+    combined_sides = torch.cat((torch.zeros_like(left_ids), torch.ones_like(right_ids)), dim=1)
+    combined_mask = torch.cat((left_mask, right_mask), dim=1)
+    derived = build_derived_battle_features(
+        combined_ids,
+        combined_positions,
+        combined_sides,
+        combined_mask,
+        combat_table,
+    )
     return TensorBatch(
         left_ids=left_ids,
         left_positions=left_positions,
         left_combat=left_combat,
         left_combat_known=left_combat_known,
+        left_formation=derived.formation[:, :max_left],
         left_mask=left_mask,
         right_ids=right_ids,
         right_positions=right_positions,
         right_combat=right_combat,
         right_combat_known=right_combat_known,
+        right_formation=derived.formation[:, max_left:],
         right_mask=right_mask,
+        relations=derived.relations,
+        relation_masks=derived.relation_masks,
         labels=labels,
     )
 
@@ -123,7 +153,12 @@ def _checkpoint(
     epoch: int,
     dataset_sha256: str,
     feature_version: str,
+    feature_schema_digest: str,
+    formula_version: str,
+    formula_digest: str,
     knowledge_sha256: str,
+    calibration_sha256: str,
+    vocabulary_digest: str,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -134,7 +169,12 @@ def _checkpoint(
             "epoch": epoch,
             "dataset_sha256": dataset_sha256,
             "feature_version": feature_version,
+            "feature_schema_sha256": feature_schema_digest,
+            "formula_version": formula_version,
+            "formula_sha256": formula_digest,
             "knowledge_sha256": knowledge_sha256,
+            "calibration_sha256": calibration_sha256,
+            "vocabulary_sha256": vocabulary_digest,
             "git_commit": _git_commit(),
         },
         path,
@@ -182,6 +222,31 @@ def train_predictor_model(
         raise ValueError("predictor dataset feature version does not match combat knowledge")
     if metadata.get("knowledge_sha256") != knowledge_sha256:
         raise ValueError("predictor dataset knowledge hash does not match current combat knowledge")
+    current_feature_schema = feature_schema_sha256()
+    current_vocabulary = vocabulary_sha256(knowledge)
+    if metadata.get("feature_schema_sha256") != current_feature_schema:
+        raise ValueError("predictor dataset feature schema hash does not match current code")
+    if metadata.get("formula_version") != DERIVED_FORMULA_VERSION:
+        raise ValueError("predictor dataset formula version does not match current code")
+    current_formula_digest = formula_sha256()
+    if metadata.get("formula_sha256") != current_formula_digest:
+        raise ValueError("predictor dataset formula hash does not match current code")
+    if metadata.get("vocabulary_sha256") != current_vocabulary:
+        raise ValueError("predictor dataset vocabulary hash does not match current combat knowledge")
+    calibration_manifest = metadata.get("calibration_manifest")
+    calibration_digest = metadata.get("calibration_sha256")
+    if not calibration_manifest or not calibration_digest:
+        raise ValueError("predictor dataset is missing its calibration contract")
+    calibration_path = workspace / calibration_manifest
+    if not calibration_path.is_file() or sha256_file(calibration_path) != calibration_digest:
+        raise ValueError("predictor dataset calibration hash does not match current calibration")
+    mismatched_samples = [
+        sample.sample_id
+        for sample in samples
+        if sample.calibration_id != metadata.get("calibration_id") or sample.calibration_sha256 != calibration_digest
+    ]
+    if mismatched_samples:
+        raise ValueError(f"predictor samples have mismatched calibration: {', '.join(mismatched_samples)}")
 
     random.seed(seed)
     np.random.seed(seed)
@@ -254,18 +319,7 @@ def train_predictor_model(
                 dtype=autocast_dtype,
                 enabled=amp_enabled,
             ):
-                logits = training_model(
-                    batch.left_ids,
-                    batch.left_positions,
-                    batch.left_combat,
-                    batch.left_combat_known,
-                    batch.left_mask,
-                    batch.right_ids,
-                    batch.right_positions,
-                    batch.right_combat,
-                    batch.right_combat_known,
-                    batch.right_mask,
-                )
+                logits = training_model(**batch.model_inputs())
                 loss = criterion(logits, batch.labels)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -285,7 +339,12 @@ def train_predictor_model(
             epoch,
             metadata["dataset_sha256"],
             knowledge.feature_version,
+            current_feature_schema,
+            DERIVED_FORMULA_VERSION,
+            current_formula_digest,
             knowledge_sha256,
+            calibration_digest,
+            current_vocabulary,
         )
         if epoch_loss < best_loss:
             best_loss = epoch_loss
@@ -297,7 +356,12 @@ def train_predictor_model(
                 epoch,
                 metadata["dataset_sha256"],
                 knowledge.feature_version,
+                current_feature_schema,
+                DERIVED_FORMULA_VERSION,
+                current_formula_digest,
                 knowledge_sha256,
+                calibration_digest,
+                current_vocabulary,
             )
 
     unit_ids = [unit.enemy_id for sample in samples for unit in (*sample.left_units, *sample.right_units)]
@@ -308,8 +372,15 @@ def train_predictor_model(
         "test_samples": 0,
         "dataset_sha256": metadata["dataset_sha256"],
         "feature_version": knowledge.feature_version,
+        "feature_schema_sha256": current_feature_schema,
+        "formula_version": DERIVED_FORMULA_VERSION,
+        "formula_sha256": current_formula_digest,
         "knowledge_sha256": knowledge_sha256,
         "knowledge_manifest": knowledge_path.relative_to(workspace).as_posix(),
+        "calibration_id": metadata.get("calibration_id"),
+        "calibration_manifest": calibration_manifest,
+        "calibration_sha256": calibration_digest,
+        "vocabulary_sha256": current_vocabulary,
         "knowledge_coverage": {"known_units": known_units, "total_units": len(unit_ids)},
         "device": str(selected_device),
         "precision": amp_dtype if amp_enabled else "float32",
@@ -360,8 +431,15 @@ def train_predictor_model(
             "seed": seed,
         },
         feature_version=knowledge.feature_version,
+        feature_schema_sha256=current_feature_schema,
+        formula_version=DERIVED_FORMULA_VERSION,
+        formula_sha256=current_formula_digest,
         knowledge_manifest=knowledge_path.relative_to(workspace).as_posix(),
         knowledge_sha256=knowledge_sha256,
+        calibration_id=metadata.get("calibration_id"),
+        calibration_manifest=calibration_manifest,
+        calibration_sha256=calibration_digest,
+        vocabulary_sha256=current_vocabulary,
         git_commit=_git_commit(),
     )
     write_contract(version_dir / "model.json", contract)

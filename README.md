@@ -6,7 +6,7 @@
 
 ## 当前范围
 
-- 数据源：G:\MAA-DuelChannel\training-data
+- 数据源：D:\MAA-DuelChannel\training-data
 - 当前场地：绿藤城（Ivyvine）
 - 已确认素材：69 段绿藤城视频，约 4.69 小时
 - 输入：准备阶段的敌人类型、数量和倒计时归零时的初始站位
@@ -38,7 +38,7 @@ cpu 与 cu128 不能同时启用。
 训练视频目录保持只读。默认示例：
 
 ~~~text
-G:\MAA-DuelChannel\
+D:\MAA-DuelChannel\
 ├── training-data\          # 原始视频，只读
 └── workspace\
     ├── assets\             # 可追溯的头像、动画和背景
@@ -75,7 +75,7 @@ CSV 或 JSON 必须为每个敌人提供稳定的正整数 id。CSV 支持以下
 把 PRTS 原名（保留名字中的引号和标点）写入 `original_name` 后，运行：
 
 ~~~powershell
-uv run duel assets fetch-prts --catalog G:\MAA-DuelChannel\workspace\manifests\greenvine-prts-catalog.csv --workspace G:\MAA-DuelChannel\workspace
+uv run duel assets fetch-prts --catalog D:\MAA-DuelChannel\workspace\manifests\greenvine-prts-catalog.csv --workspace D:\MAA-DuelChannel\workspace
 ~~~
 
 目录结构为 `assets/portraits/<id>/thumbnail.png` 和 `assets/battlefield_spine/<id>/variant-*/`。后者每个战斗姿态单独保存 `.skel`、`.atlas`、纹理，并在 `assets/catalog.json` 中记录 PRTS 页面/文件 URL 与 SHA-256；重复运行会复用同 URL 的本地文件，`--force` 可强制更新。当前目录含 91 类头像和战场 Spine，其中 ID 79–91 补齐 VS-2 敌人表中原目录遗漏的 13 类。
@@ -93,7 +93,7 @@ PRTS 页面说明游戏图片、动画等版权归鹰角网络及其关联公司
 准备一张或多张无单位的绿藤城背景，然后同步素材：
 
 ~~~powershell
-uv run duel assets sync --catalog C:\path\to\green-vine-catalog.csv --background-dir C:\path\to\green-vine-backgrounds --workspace G:\MAA-DuelChannel\workspace
+uv run duel assets sync --catalog C:\path\to\green-vine-catalog.csv --background-dir C:\path\to\green-vine-backgrounds --workspace D:\MAA-DuelChannel\workspace
 ~~~
 
 workspace\assets\catalog.json 会列出缺少头像或动画的敌人。涉及缺失类别的自动样本需要补素材或人工审核。
@@ -105,7 +105,7 @@ workspace\assets\catalog.json 会列出缺少头像或动画的敌人。涉及�
 ### 1. 扫描视频
 
 ~~~powershell
-uv run duel scan --input-dir G:\MAA-DuelChannel\training-data --workspace G:\MAA-DuelChannel\workspace
+uv run duel scan --input-dir D:\MAA-DuelChannel\training-data --workspace D:\MAA-DuelChannel\workspace
 ~~~
 
 扫描使用 ffprobe 获取尺寸、帧率和时长，并计算视频 SHA-256。未变化的文件会复用已有记录。当前训练只消费识别为 green_vine 的视频。
@@ -113,7 +113,7 @@ uv run duel scan --input-dir G:\MAA-DuelChannel\training-data --workspace G:\MAA
 ### 2. 生成合成 YOLO 数据
 
 ~~~powershell
-uv run duel synth --workspace G:\MAA-DuelChannel\workspace --portrait-variants 40 --detection-images 1000 --seed 20260920
+uv run duel synth --workspace D:\MAA-DuelChannel\workspace --portrait-variants 40 --detection-images 1000 --seed 20260920
 ~~~
 
 头像和战场数据都只生成一套训练样本。Ultralytics classification 初始化时强制要求 `val` 目录，因此头像数据用硬链接（不支持时复制）建立与 train 完全相同的兼容视图；战场数据的 val 也指向 train。它们都不是留出集，报告中的验证结果仍然只能视作训练集拟合结果。每次生成先写入临时目录，完成后整体替换 synthetic，旧类别和旧图片不会混入新数据。
@@ -121,8 +121,8 @@ uv run duel synth --workspace G:\MAA-DuelChannel\workspace --portrait-variants 4
 ### 3. 训练两个视觉模型
 
 ~~~powershell
-uv run duel train-vision roster --workspace G:\MAA-DuelChannel\workspace --epochs 100 --device 0 --batch -1 --cache disk --amp --all
-uv run duel train-vision battlefield --workspace G:\MAA-DuelChannel\workspace --epochs 100 --device 0 --batch -1 --cache disk --amp --all
+uv run duel train-vision roster --workspace D:\MAA-DuelChannel\workspace --epochs 100 --device 0 --batch -1 --cache disk --amp --all
+uv run duel train-vision battlefield --workspace D:\MAA-DuelChannel\workspace --epochs 100 --device 0 --batch -1 --cache disk --amp --all
 ~~~
 
 - roster：准备区圆形头像分类。
@@ -134,7 +134,7 @@ uv run duel train-vision battlefield --workspace G:\MAA-DuelChannel\workspace --
 ### 4. 提取对局
 
 ~~~powershell
-uv run duel extract --input-dir G:\MAA-DuelChannel\training-data --workspace G:\MAA-DuelChannel\workspace --device 0 --half --batch-size 32
+uv run duel extract --input-dir D:\MAA-DuelChannel\training-data --workspace D:\MAA-DuelChannel\workspace --device 0 --half --batch-size 32
 ~~~
 
 提取器以低帧率扫描时间线，再只在证据时间点运行昂贵模型：
@@ -151,7 +151,7 @@ uv run duel extract --input-dir G:\MAA-DuelChannel\training-data --workspace G:\
 ### 5. 在 Ultralytics Platform 人工审核
 
 ~~~powershell
-uv run duel review --workspace G:\MAA-DuelChannel\workspace
+uv run duel review --workspace D:\MAA-DuelChannel\workspace
 ~~~
 
 命令会打开 Ultralytics Platform，并在 `review\platform\<export-id>` 生成三个上传包：
@@ -164,8 +164,8 @@ uv run duel review --workspace G:\MAA-DuelChannel\workspace
 
 ~~~powershell
 uv run duel annotate import `
-  --workspace G:\MAA-DuelChannel\workspace `
-  --export-directory G:\MAA-DuelChannel\workspace\review\platform\platform-20260921T120000Z `
+  --workspace D:\MAA-DuelChannel\workspace `
+  --export-directory D:\MAA-DuelChannel\workspace\review\platform\platform-20260921T120000Z `
   --roster C:\Downloads\roster.ndjson `
   --battlefield C:\Downloads\battlefield.ndjson `
   --ocr C:\Downloads\ocr.ndjson `
@@ -181,7 +181,7 @@ uv run duel annotate import `
 
 ~~~powershell
 uv run duel annotate sample `
-  --workspace G:\MAA-DuelChannel\workspace `
+  --workspace D:\MAA-DuelChannel\workspace `
   --annotation-version annotations-v1 `
   --output-version vision-v2 `
   --hard-fraction 0.5 `
@@ -196,9 +196,9 @@ uv run duel annotate sample `
 采样结果写入 `datasets\vision-v2`，同一个标注不会同时进入多个集合。随后针对审核数据进行下一轮训练：
 
 ~~~powershell
-uv run duel train-vision roster --workspace G:\MAA-DuelChannel\workspace --dataset-version vision-v2 --device 0 --batch -1 --amp --all
-uv run duel train-vision battlefield --workspace G:\MAA-DuelChannel\workspace --dataset-version vision-v2 --device 0 --batch -1 --amp --all
-uv run duel train-vision ocr --workspace G:\MAA-DuelChannel\workspace --dataset-version vision-v2 --device 0 --batch -1 --amp --all
+uv run duel train-vision roster --workspace D:\MAA-DuelChannel\workspace --dataset-version vision-v2 --device 0 --batch -1 --amp --all
+uv run duel train-vision battlefield --workspace D:\MAA-DuelChannel\workspace --dataset-version vision-v2 --device 0 --batch -1 --amp --all
+uv run duel train-vision ocr --workspace D:\MAA-DuelChannel\workspace --dataset-version vision-v2 --device 0 --batch -1 --amp --all
 ~~~
 
 训练出 OCR 分类模型后，`extract` 会优先批量使用它识别准备区数量；倒计时和 `ROUND` 文本仍由 RapidOCR 识别。没有 OCR 分类 checkpoint 时自动回退到 RapidOCR 数量识别。
@@ -206,20 +206,22 @@ uv run duel train-vision ocr --workspace G:\MAA-DuelChannel\workspace --dataset-
 ### 7. 构建 Transformer 数据集
 
 ~~~powershell
-uv run duel build-dataset --workspace G:\MAA-DuelChannel\workspace
+uv run duel build-dataset --workspace D:\MAA-DuelChannel\workspace
 ~~~
 
-输出 manifests\predictor.jsonl 和 predictor.meta.json。构建器先用人工 correction 覆盖自动结果，只写 accepted 样本，并记录数据集 SHA-256、实际写入数量、胜负分布、战斗特征版本和知识表 SHA-256。
+构建前必须准备 `assets\calibration\green-vine-video-v1.json`。视频标定使用至少 8 个地砖交点拟合单应矩阵，并用至少 2 个独立点检查；最大检查误差超过 0.15 格时停止。自动检测的归一化底边中心会同时保存为原始坐标，并转换成以格为单位的地面坐标。accepted 样本缺少标定时会列出样本 ID 并停止。
+
+输出 manifests\predictor.jsonl 和 predictor.meta.json。构建器先用人工 correction 覆盖自动结果，只写 accepted 样本，并记录数据集 SHA-256、实际写入数量、胜负分布，以及知识、公式、特征结构、标定和 ID 词表的版本与 SHA-256。数据集版本由这些依赖共同生成，知识变化不会覆盖旧版本。
 
 ### 8. 训练胜负预测模型
 
 ~~~powershell
-uv run duel train-predictor --workspace G:\MAA-DuelChannel\workspace --epochs 100 --batch-size 64 --device cuda --workers 4 --amp --amp-dtype float16 --pin-memory --tf32 --seed 20260920 --all
+uv run duel train-predictor --workspace D:\MAA-DuelChannel\workspace --epochs 100 --batch-size 64 --device cuda --workers 4 --amp --amp-dtype float16 --pin-memory --tf32 --seed 20260920 --all
 ~~~
 
-每只单位是一个 token，包含敌人 ID、共享战场坐标、VS-2 数值、攻击属性和技能机制。数量由同类 token 的重复次数表示。未知知识使用显式掩码，不会被解释成数值为零或没有技能。
+每只单位是一个 token，包含敌人 ID、地面格坐标、VS-2 基础值、开场攻击与技能数值、后续形态摘要，以及 12 个聚集、离散、前后排、承伤和保护阵型量。数量由同类 token 的重复次数表示。未知知识使用显式掩码，不会被解释成数值为零或没有技能。
 
-双方单位进入同一个关系 Transformer。注意力关系包含实际距离、射程、物理/法术/真实伤害对防御、控制对免疫，以及友军减防、减抗、治疗和护盾协同。最终 logit 为 g(left, right) - g(right, left)，因此交换双方时预测概率严格互补。
+双方单位进入同一个 Relation Transformer。有向关系矩阵固定为 20 维：距离、前后与横向位移、射程余量、接敌时间、三类有效 DPS、单次普攻、普攻次数、持续 TTK、10 秒开场伤害、群攻覆盖、硬控覆盖、目标分配、治疗、减防减抗协同、前排遮护和保护秒数。物理伤害按每段分别扣防，目标与治疗容量守恒。最终 logit 为 `g(left, right) - g(right, left)`，因此交换双方时预测概率严格互补。
 
 产物：
 
@@ -228,14 +230,24 @@ uv run duel train-predictor --workspace G:\MAA-DuelChannel\workspace --epochs 10
 - models\predictor\training-report.json
 - models\predictor\versions\<model-version>\best-train-loss.pt
 
-训练入口会验证 accepted_samples == written_samples == training_samples，并核对数据集记录的知识 SHA-256 与当前知识表；不一致时停止。checkpoint、训练报告和模型版本契约均记录战斗特征版本、知识路径、知识 SHA-256 和实际单位覆盖率。
+训练入口会验证 accepted_samples == written_samples == training_samples，并核对数据集记录的知识、公式、特征结构、标定和 ID 词表 SHA-256；不一致时停止。checkpoint、训练报告和模型版本契约保存同一组依赖。
 
 `--amp-dtype bfloat16` 可在支持 BF16 的显卡上使用；`--compile` 可选择启用 `torch.compile`，首次编译会增加启动时间。DataLoader 使用 pinned memory 和 non-blocking GPU 传输。YOLO 训练支持自动批量大小或显存占比；抽取阶段会批量识别同局的头像裁剪，并对检测器暴露批量推理接口。
 
-### 9. 生成报告
+### 9. 推理与关系解释
+
+推理输入使用不带胜负标签的 `BattleState` JSON。`x`、`y` 是地面格坐标，必须同时提供与 checkpoint 一致的 `calibration_id` 和 `calibration_sha256`：
 
 ~~~powershell
-uv run duel report --workspace G:\MAA-DuelChannel\workspace
+uv run duel predict-duel --workspace D:\MAA-DuelChannel\workspace --input D:\MAA-DuelChannel\battle-state.json --device cuda --explain --output D:\MAA-DuelChannel\prediction.json
+~~~
+
+输出包含左右获胜概率。`--explain` 额外导出带单位实例 ID 的 DPS、TTK、10 秒爆发、群攻覆盖、目标分配、遮护分数和保护秒数矩阵。
+
+### 10. 生成报告
+
+~~~powershell
+uv run duel report --workspace D:\MAA-DuelChannel\workspace
 ~~~
 
 报告位于 reports\summary.json、summary.md 和 extraction-errors.json。
@@ -254,14 +266,14 @@ RoundSample 保存视频哈希、局序号、四个阶段时间戳、三张证�
 
 契约记录父版本、数据清单 SHA-256、任务与采样桶计数、基础权重、训练参数、精度、设备、checkpoint SHA-256 和 Git commit。`models\vision\<task>\weights\best.pt` 始终是当前部署副本，历史 checkpoint 保留在模型版本目录中。
 
-所有坐标相对有效游戏视口归一化到 [0, 1]：
+`RoundSample` 保留相对有效游戏视口归一化到 [0, 1] 的原始检测坐标：
 
 ~~~text
 bbox = (x1, y1, x2, y2)
 position = ((x1 + x2) / 2, y2)
 ~~~
 
-也就是使用检测框底边中心作为地面站位。
+也就是使用检测框底边中心作为初始落点。构建 `PredictorSample` 时再由绑定的视频标定转换到地面格坐标；原始坐标、位置质量、标定 ID 和 SHA-256 一并保留。PRTS 预览图不能复用视频标定。
 
 ## 测试与格式检查
 

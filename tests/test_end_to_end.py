@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from maa_duel.assets import sync_assets
+from maa_duel.calibration import BattlefieldCalibration, CalibrationPoint, save_calibration
 from maa_duel.combat import CombatKnowledge, CombatStats, EnemyCombatProfile, StageRules, save_combat_knowledge
 from maa_duel.dataset import build_predictor_dataset
 from maa_duel.reporting import write_report
@@ -22,6 +23,27 @@ def write_rgba(path: Path, color):
     image[4:28, 4:28, :3] = color
     image[4:28, 4:28, 3] = 255
     assert cv2.imwrite(str(path), image)
+
+
+def write_test_calibration(workspace):
+    save_calibration(
+        workspace / "assets" / "calibration" / "green-vine-video-v1.json",
+        BattlefieldCalibration(
+            calibration_id="green-vine-video-v1",
+            image_width=1500,
+            image_height=1100,
+            map_width=15,
+            map_height=11,
+            fit_points=[
+                CalibrationPoint(image_x=x * 100, image_y=y * 100, ground_x=x, ground_y=y)
+                for x, y in ((0, 0), (15, 0), (0, 11), (15, 11), (7.5, 0), (7.5, 11), (0, 5.5), (15, 5.5))
+            ],
+            check_points=[
+                CalibrationPoint(image_x=300, image_y=400, ground_x=3, ground_y=4),
+                CalibrationPoint(image_x=1200, image_y=900, ground_x=12, ground_y=9),
+            ],
+        ),
+    )
 
 
 def test_synthetic_end_to_end_pipeline(tmp_path):
@@ -40,6 +62,7 @@ def test_synthetic_end_to_end_pipeline(tmp_path):
 
     workspace = tmp_path / "workspace"
     sync_assets(catalog, workspace, background_dir=backgrounds)
+    write_test_calibration(workspace)
     save_combat_knowledge(
         workspace / "assets" / "combat" / "vs2_enemy_combat.json",
         CombatKnowledge(

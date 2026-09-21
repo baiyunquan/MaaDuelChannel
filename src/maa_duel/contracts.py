@@ -104,8 +104,15 @@ class DatasetVersion(BaseModel):
     sampling_policy: SamplingPolicy | None = None
     split_policy: Literal["annotation-only", "all-training"] = "annotation-only"
     feature_version: str | None = None
+    feature_schema_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    formula_version: str | None = None
+    formula_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     knowledge_manifest: str | None = None
     knowledge_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    calibration_id: str | None = None
+    calibration_manifest: str | None = None
+    calibration_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    vocabulary_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     git_commit: str
 
 
@@ -127,8 +134,15 @@ class ModelVersion(BaseModel):
     training_args: dict[str, object]
     metrics_scope: Literal["training-only"] = "training-only"
     feature_version: str | None = None
+    feature_schema_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    formula_version: str | None = None
+    formula_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     knowledge_manifest: str | None = None
     knowledge_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    calibration_id: str | None = None
+    calibration_manifest: str | None = None
+    calibration_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    vocabulary_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     git_commit: str
 
 

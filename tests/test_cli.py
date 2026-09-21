@@ -16,6 +16,7 @@ def test_cli_exposes_pipeline_commands():
         "review",
         "build-dataset",
         "train-predictor",
+        "predict-duel",
         "report",
     ):
         assert command in result.stdout
@@ -24,11 +25,13 @@ def test_cli_exposes_pipeline_commands():
 def test_training_commands_expose_reproducibility_options():
     runner = CliRunner()
     predictor = runner.invoke(app, ["train-predictor", "--help"])
+    inference = runner.invoke(app, ["predict-duel", "--help"])
     vision = runner.invoke(app, ["train-vision", "--help"])
     synthetic = runner.invoke(app, ["synth", "--help"])
     assets = runner.invoke(app, ["assets", "--help"])
 
     assert predictor.exit_code == 0
+    assert inference.exit_code == 0
     assert "--epochs" in predictor.stdout
     assert "--seed" in predictor.stdout
     assert vision.exit_code == 0
