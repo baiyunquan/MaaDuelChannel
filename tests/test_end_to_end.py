@@ -1,11 +1,13 @@
 import csv
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from maa_duel.assets import sync_assets
+from maa_duel.combat import CombatKnowledge, CombatStats, EnemyCombatProfile, StageRules, save_combat_knowledge
 from maa_duel.dataset import build_predictor_dataset
 from maa_duel.reporting import write_report
 from maa_duel.schema import ReviewStatus, Winner
@@ -38,6 +40,37 @@ def test_synthetic_end_to_end_pipeline(tmp_path):
 
     workspace = tmp_path / "workspace"
     sync_assets(catalog, workspace, background_dir=backgrounds)
+    save_combat_knowledge(
+        workspace / "assets" / "combat" / "vs2_enemy_combat.json",
+        CombatKnowledge(
+            stage_id="VS-2",
+            stage_title="争锋对决！",
+            source_page="https://prts.wiki/w/VS-2",
+            source_revision=1,
+            fetched_at=datetime(2026, 9, 21, tzinfo=UTC),
+            rules=StageRules(raw_text=""),
+            enemies=[
+                EnemyCombatProfile(
+                    enemy_id=enemy_id,
+                    display_name=f"unit-{enemy_id}",
+                    portrait_name=f"unit-{enemy_id}",
+                    page_name=f"unit-{enemy_id}",
+                    count_raw="1",
+                    stats=CombatStats(
+                        hp=1000,
+                        attack=100,
+                        defense=50,
+                        resistance=0,
+                        attack_interval=1,
+                        weight=1,
+                        move_speed=1,
+                        attack_radius=1,
+                    ),
+                )
+                for enemy_id in (1, 2)
+            ],
+        ),
+    )
     synthetic = generate_synthetic_dataset(workspace, portrait_variants=1, detection_images=1, seed=1)
     left = make_sample("1" * 32, ReviewStatus.ACCEPTED)
     right = make_sample("2" * 32, ReviewStatus.ACCEPTED)

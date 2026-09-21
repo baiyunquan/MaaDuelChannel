@@ -30,7 +30,9 @@ class DamageType(StrEnum):
 
 class MechanicKind(StrEnum):
     DEFENSE_SHRED = "defense_shred"
+    DEFENSE_IGNORE = "defense_ignore"
     RESISTANCE_SHRED = "resistance_shred"
+    RESISTANCE_IGNORE = "resistance_ignore"
     STUN = "stun"
     COLD = "cold"
     FREEZE = "freeze"
@@ -147,6 +149,7 @@ class EnemyCombatProfile(BaseModel):
     attack_modes: list[AttackMode] = Field(default_factory=list)
     movement_modes: list[MovementMode] = Field(default_factory=list)
     damage_types: list[DamageType] = Field(default_factory=list)
+    damage_type_source: Literal["enemy_page", "default_attack_rule", "unknown"] = "unknown"
     mechanics: list[MechanicKind] = Field(default_factory=list)
     ability_text: str = ""
     skills: list[SkillKnowledge] = Field(default_factory=list)

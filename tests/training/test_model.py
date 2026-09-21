@@ -153,7 +153,9 @@ def test_pairwise_relations_express_enemy_matchups_and_friendly_synergy():
     combat[0, 0, CombatFeatureIndex.PHYSICAL] = 1
     combat[0, 0, CombatFeatureIndex.STUN] = 1
     combat[0, 0, CombatFeatureIndex.DEFENSE_SHRED] = 1
+    combat[0, 0, CombatFeatureIndex.DEFENSE_IGNORE] = 1
     combat[0, 1, CombatFeatureIndex.STATUS_IMMUNITY] = 1
+    combat[0, 1, CombatFeatureIndex.DEFENSE] = 0.5
     combat[0, 2, CombatFeatureIndex.PHYSICAL] = 1
     sides = torch.tensor([[0, 1, 0]])
     known = torch.ones((1, 3), dtype=torch.bool)
@@ -163,8 +165,11 @@ def test_pairwise_relations_express_enemy_matchups_and_friendly_synergy():
     assert relations[0, 0, 1, RelationFeatureIndex.OPPONENT].item() == 1
     assert relations[0, 0, 1, RelationFeatureIndex.PHYSICAL_EFFECTIVENESS].item() > 0
     assert relations[0, 0, 1, RelationFeatureIndex.CONTROL_PRESSURE].item() == 0
+    assert relations[0, 0, 1, RelationFeatureIndex.DEFENSE_IGNORE_MATCHUP].item() == 0.5
     assert relations[0, 0, 2, RelationFeatureIndex.SAME_SIDE].item() == 1
     assert relations[0, 0, 2, RelationFeatureIndex.DEFENSE_SHRED_SYNERGY].item() == 1
+    assert relations[0, 0, 0, RelationFeatureIndex.SAME_SIDE].item() == 0
+    assert relations[0, 0, 0, RelationFeatureIndex.DEFENSE_SHRED_SYNERGY].item() == 0
 
 
 def test_combat_and_relation_encoders_receive_gradients_from_basic_batch():

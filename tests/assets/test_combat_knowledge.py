@@ -76,6 +76,16 @@ def test_enemy_parser_structures_attack_damage_skills_and_mechanics():
     assert MechanicKind.STACKING in details.mechanics
 
 
+def test_enemy_parser_keeps_penetration_distinct_from_team_defense_shred():
+    details = parse_enemy_wikitext(
+        "测试敌人",
+        "|攻击方式=近战\n|技能0=装甲穿刺\n|技能0效果=造成物理伤害且无视60%防御力",
+    )
+
+    assert MechanicKind.DEFENSE_IGNORE in details.mechanics
+    assert MechanicKind.DEFENSE_SHRED not in details.mechanics
+
+
 def test_compiled_knowledge_maps_stage_names_to_asset_ids_and_round_trips(tmp_path):
     stage = parse_stage_wikitext(STAGE_WIKITEXT)
     details = parse_enemy_wikitext("酸液源石虫·α", ENEMY_WIKITEXT, revision_id=123)
@@ -97,6 +107,7 @@ def test_compiled_knowledge_maps_stage_names_to_asset_ids_and_round_trips(tmp_pa
     loaded = load_combat_knowledge(path)
 
     assert loaded.enemies[0].enemy_id == 42
+    assert loaded.enemies[0].damage_type_source == "enemy_page"
     assert loaded.enemies[0].mechanics == [
         MechanicKind.DEFENSE_SHRED,
         MechanicKind.STUN,
@@ -104,6 +115,21 @@ def test_compiled_knowledge_maps_stage_names_to_asset_ids_and_round_trips(tmp_pa
     ]
     assert loaded.source_revision == 456
     assert len(digest) == 64
+
+
+def test_compiler_marks_default_physical_attacks_when_page_has_no_damage_override():
+    stage = parse_stage_wikitext(STAGE_WIKITEXT)
+    details = parse_enemy_wikitext("酸液源石虫·α", "|攻击方式=远程\n|行动方式=地面", revision_id=123)
+    assets = AssetManifest(
+        source_catalog="file:///catalog.csv",
+        source_catalog_sha256="a" * 64,
+        enemies=[EnemyAsset(enemy_id=42, name="流鼻涕虫虫", original_name="酸液源石虫·α")],
+    )
+
+    profile = compile_combat_knowledge(stage, assets, {"酸液源石虫·α": details}, source_revision=456).enemies[0]
+
+    assert profile.damage_types == [DamageType.PHYSICAL]
+    assert profile.damage_type_source == "default_attack_rule"
 
 
 def test_sync_writes_complete_table_from_stage_and_enemy_revisions(tmp_path):

@@ -28,8 +28,10 @@ PRTS_STAGE_TITLE = "VS-2 争锋对决！"
 PRTS_STAGE_URL = "https://prts.wiki/w/VS-2_%E4%BA%89%E9%94%8B%E5%AF%B9%E5%86%B3%EF%BC%81"
 
 _MECHANIC_KEYWORDS: tuple[tuple[MechanicKind, tuple[str, ...]], ...] = (
-    (MechanicKind.DEFENSE_SHRED, ("防御力-", "降低防御", "无视防御")),
-    (MechanicKind.RESISTANCE_SHRED, ("法术抗性-", "降低法术抗性", "无视法术抗性")),
+    (MechanicKind.DEFENSE_SHRED, ("防御力-", "降低防御")),
+    (MechanicKind.DEFENSE_IGNORE, ("无视防御", "无视目标一定的防御")),
+    (MechanicKind.RESISTANCE_SHRED, ("法术抗性-", "降低法术抗性")),
+    (MechanicKind.RESISTANCE_IGNORE, ("无视法术抗性",)),
     (MechanicKind.STUN, ("晕眩",)),
     (MechanicKind.COLD, ("寒冷",)),
     (MechanicKind.FREEZE, ("冻结",)),
@@ -82,7 +84,12 @@ def _number(value: str) -> float:
 
 
 def infer_mechanics(text: str) -> list[MechanicKind]:
-    return [kind for kind, keywords in _MECHANIC_KEYWORDS if any(keyword in text for keyword in keywords)]
+    found = [kind for kind, keywords in _MECHANIC_KEYWORDS if any(keyword in text for keyword in keywords)]
+    if re.search(r"无视[^<\r\n]{0,20}防御", text) and MechanicKind.DEFENSE_IGNORE not in found:
+        found.insert(1, MechanicKind.DEFENSE_IGNORE)
+    if re.search(r"无视[^<\r\n]{0,20}法术抗性", text) and MechanicKind.RESISTANCE_IGNORE not in found:
+        found.insert(3, MechanicKind.RESISTANCE_IGNORE)
+    return found
 
 
 def parse_stage_wikitext(text: str) -> ParsedStage:
@@ -196,6 +203,11 @@ def compile_combat_knowledge(
     profiles: list[EnemyCombatProfile] = []
     for row in stage.enemies:
         details = normalized_pages.get(_normalize_name(row.portrait_name))
+        damage_types = details.damage_types if details else []
+        damage_type_source = "enemy_page" if damage_types else "unknown"
+        if not damage_types and row.stats.attack > 0:
+            damage_types = [DamageType.PHYSICAL]
+            damage_type_source = "default_attack_rule"
         combined_text = " ".join(
             [row.stage_notes, details.ability_text if details else "", *(skill.effect for skill in details.skills)]
             if details
@@ -216,7 +228,8 @@ def compile_combat_knowledge(
                 stats=row.stats,
                 attack_modes=details.attack_modes if details else [],
                 movement_modes=details.movement_modes if details else [],
-                damage_types=details.damage_types if details else [],
+                damage_types=damage_types,
+                damage_type_source=damage_type_source,
                 mechanics=infer_mechanics(combined_text),
                 ability_text=details.ability_text if details else "",
                 skills=details.skills if details else [],

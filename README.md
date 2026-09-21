@@ -78,7 +78,15 @@ CSV 或 JSON 必须为每个敌人提供稳定的正整数 id。CSV 支持以下
 uv run duel assets fetch-prts --catalog G:\MAA-DuelChannel\workspace\manifests\greenvine-prts-catalog.csv --workspace G:\MAA-DuelChannel\workspace
 ~~~
 
-目录结构为 `assets/portraits/<id>/thumbnail.png` 和 `assets/battlefield_spine/<id>/variant-*/`。后者每个战斗姿态单独保存 `.skel`、`.atlas`、纹理，并在 `assets/catalog.json` 中记录 PRTS 页面/文件 URL 与 SHA-256；重复运行会复用同 URL 的本地文件，`--force` 可强制更新。PRTS 为 78 个绿藤城敌人提供头像页和 Spine 页面；下载结果会逐项报告缺失项。
+目录结构为 `assets/portraits/<id>/thumbnail.png` 和 `assets/battlefield_spine/<id>/variant-*/`。后者每个战斗姿态单独保存 `.skel`、`.atlas`、纹理，并在 `assets/catalog.json` 中记录 PRTS 页面/文件 URL 与 SHA-256；重复运行会复用同 URL 的本地文件，`--force` 可强制更新。当前目录含 91 类头像和战场 Spine，其中 ID 79–91 补齐 VS-2 敌人表中原目录遗漏的 13 类。
+
+同步 VS-2 地图数值、敌人攻击属性、天赋和技能：
+
+~~~powershell
+uv run duel assets fetch-prts-combat --workspace D:\MAA-DuelChannel\workspace
+~~~
+
+结果写入 `assets/combat/vs2_enemy_combat.json`。生命、攻击、防御、法抗、攻击间隔、重量、移速和攻击范围直接取自 VS-2 地图表；敌人页只补充攻击方式、伤害类型和技能。表格保留地图与敌人页的 PRTS 修订号、原始数值文本、技能原文和自动解析状态。
 
 PRTS 页面说明游戏图片、动画等版权归鹰角网络及其关联公司所有。此命令只把素材写入外部 workspace，不会把图片或模型加入 Git；见 [PRTS 版权说明](https://prts.wiki/w/PRTS:%E7%89%88%E6%9D%83)。
 
@@ -201,7 +209,7 @@ uv run duel train-vision ocr --workspace G:\MAA-DuelChannel\workspace --dataset-
 uv run duel build-dataset --workspace G:\MAA-DuelChannel\workspace
 ~~~
 
-输出 manifests\predictor.jsonl 和 predictor.meta.json。构建器先用人工 correction 覆盖自动结果，只写 accepted 样本，并记录数据集 SHA-256、实际写入数量和胜负分布。
+输出 manifests\predictor.jsonl 和 predictor.meta.json。构建器先用人工 correction 覆盖自动结果，只写 accepted 样本，并记录数据集 SHA-256、实际写入数量、胜负分布、战斗特征版本和知识表 SHA-256。
 
 ### 8. 训练胜负预测模型
 
@@ -209,9 +217,9 @@ uv run duel build-dataset --workspace G:\MAA-DuelChannel\workspace
 uv run duel train-predictor --workspace G:\MAA-DuelChannel\workspace --epochs 100 --batch-size 64 --device cuda --workers 4 --amp --amp-dtype float16 --pin-memory --tf32 --seed 20260920 --all
 ~~~
 
-每只单位是一个 token，包含敌人 ID embedding 和归一化位置。数量由同类 token 的重复次数表示。批次使用动态 padding 和 attention mask；右方 x 坐标会镜像为从其出生侧观察的坐标。
+每只单位是一个 token，包含敌人 ID、共享战场坐标、VS-2 数值、攻击属性和技能机制。数量由同类 token 的重复次数表示。未知知识使用显式掩码，不会被解释成数值为零或没有技能。
 
-双方共享 TeamEncoder。最终 logit 为 g(left, right) - g(right, left)，因此交换双方时预测概率严格互补。
+双方单位进入同一个关系 Transformer。注意力关系包含实际距离、射程、物理/法术/真实伤害对防御、控制对免疫，以及友军减防、减抗、治疗和护盾协同。最终 logit 为 g(left, right) - g(right, left)，因此交换双方时预测概率严格互补。
 
 产物：
 
@@ -220,7 +228,7 @@ uv run duel train-predictor --workspace G:\MAA-DuelChannel\workspace --epochs 10
 - models\predictor\training-report.json
 - models\predictor\versions\<model-version>\best-train-loss.pt
 
-训练入口会验证 accepted_samples == written_samples == training_samples，不一致时停止。
+训练入口会验证 accepted_samples == written_samples == training_samples，并核对数据集记录的知识 SHA-256 与当前知识表；不一致时停止。checkpoint、训练报告和模型版本契约均记录战斗特征版本、知识路径、知识 SHA-256 和实际单位覆盖率。
 
 `--amp-dtype bfloat16` 可在支持 BF16 的显卡上使用；`--compile` 可选择启用 `torch.compile`，首次编译会增加启动时间。DataLoader 使用 pinned memory 和 non-blocking GPU 传输。YOLO 训练支持自动批量大小或显存占比；抽取阶段会批量识别同局的头像裁剪，并对检测器暴露批量推理接口。
 

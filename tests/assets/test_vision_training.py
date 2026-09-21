@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -49,6 +50,10 @@ def test_training_keeps_default_weights_and_outputs_inside_workspace(tmp_path, m
 
         def train(self, **kwargs):
             calls["train"] = kwargs
+            weights = kwargs["project"] + "/" + kwargs["name"] + "/weights"
+            weight_root = Path(weights)
+            weight_root.mkdir(parents=True)
+            (weight_root / "best.pt").write_bytes(b"fake checkpoint")
 
     monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=FakeYolo))
     dataset = tmp_path / "synthetic" / "roster"
@@ -60,4 +65,7 @@ def test_training_keeps_default_weights_and_outputs_inside_workspace(tmp_path, m
     assert calls["model_path"] == str(tmp_path / "models" / "base" / "yolo11n-cls.pt")
     assert calls["train"]["data"] == str(dataset)
     assert calls["train"]["val"] is False
-    assert output == tmp_path / "models" / "vision" / "roster" / "weights" / "best.pt"
+    assert output.name == "best.pt"
+    assert output.parent.name == "weights"
+    assert output.is_relative_to(tmp_path / "models" / "vision" / "roster")
+    assert (tmp_path / "models" / "vision" / "roster" / "weights" / "best.pt").is_file()

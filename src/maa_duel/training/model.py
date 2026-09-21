@@ -19,14 +19,16 @@ class RelationFeatureIndex(IntEnum):
     TARGET_IN_RANGE = 6
     PHYSICAL_EFFECTIVENESS = 7
     ARTS_EFFECTIVENESS = 8
-    TRUE_PRESSURE = 9
-    CONTROL_PRESSURE = 10
-    DEFENSE_SHRED_SYNERGY = 11
-    RESISTANCE_SHRED_SYNERGY = 12
-    HEAL_SUPPORT = 13
-    SHIELD_SUPPORT = 14
-    SOURCE_KNOWN = 15
-    TARGET_KNOWN = 16
+    DEFENSE_IGNORE_MATCHUP = 9
+    RESISTANCE_IGNORE_MATCHUP = 10
+    TRUE_PRESSURE = 11
+    CONTROL_PRESSURE = 12
+    DEFENSE_SHRED_SYNERGY = 13
+    RESISTANCE_SHRED_SYNERGY = 14
+    HEAL_SUPPORT = 15
+    SHIELD_SUPPORT = 16
+    SOURCE_KNOWN = 17
+    TARGET_KNOWN = 18
 
 
 CONTROL_FEATURES = (
@@ -64,8 +66,10 @@ def pairwise_relation_features(
     target = combat.unsqueeze(1)
     source_sides = sides.unsqueeze(2)
     target_sides = sides.unsqueeze(1)
-    same_side = (source_sides == target_sides).to(combat.dtype)
-    opponent = 1.0 - same_side
+    unit_count = sides.shape[1]
+    different_unit = 1.0 - torch.eye(unit_count, dtype=combat.dtype, device=combat.device).unsqueeze(0)
+    same_side = (source_sides == target_sides).to(combat.dtype) * different_unit
+    opponent = (source_sides != target_sides).to(combat.dtype)
 
     source_range = _feature(source, CombatFeatureIndex.ATTACK_RADIUS) * 5.0
     target_range = _feature(target, CombatFeatureIndex.ATTACK_RADIUS) * 5.0
@@ -94,6 +98,12 @@ def pairwise_relation_features(
     )
     output[..., RelationFeatureIndex.ARTS_EFFECTIVENESS] = (
         arts * source_attack * (1.0 - target_resistance).clamp(min=0.0, max=2.0)
+    )
+    output[..., RelationFeatureIndex.DEFENSE_IGNORE_MATCHUP] = (
+        opponent * _feature(source, CombatFeatureIndex.DEFENSE_IGNORE) * target_defense
+    )
+    output[..., RelationFeatureIndex.RESISTANCE_IGNORE_MATCHUP] = (
+        opponent * _feature(source, CombatFeatureIndex.RESISTANCE_IGNORE) * target_resistance.clamp(min=0.0)
     )
     output[..., RelationFeatureIndex.TRUE_PRESSURE] = true_damage * source_attack
     output[..., RelationFeatureIndex.CONTROL_PRESSURE] = (
