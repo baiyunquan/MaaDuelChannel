@@ -70,13 +70,15 @@
           "name": "lmc-background",
           "bundle": "arts/maps/map_lm_center/background_mesh/bg_lmc.ab",
           "assetPath": "dyn/arts/maps/map_lm_center/background_mesh/bg_lmc.fbx",
-          "layer": "environment"
+          "layer": "environment",
+          "materialBundle": "arts/maps/map_lm_center/res.ab",
+          "materialAssetPath": "dyn/arts/maps/map_lm_center/res/materials/mt_lmc_d.mat"
         },
         {
           "name": "battleground-background",
           "bundle": "arts/maps/map_battleground/background_mesh/bg_battleground.ab",
           "assetPath": "dyn/arts/maps/map_battleground/background_mesh/bg_battleground.fbx",
-          "layer": "environment"
+          "layer": "ground"
         },
         {
           "name": "battleground-light-help",
@@ -88,7 +90,9 @@
           "name": "multiplayer-roof",
           "bundle": "arts/maps/multi_player/background_mesh/bg_multi_player_roof.ab",
           "assetPath": "dyn/arts/maps/multi_player/background_mesh/bg_multi_player_roof.fbx",
-          "layer": "environment"
+          "layer": "environment",
+          "materialBundle": "arts/maps/multi_player/res.ab",
+          "materialAssetPath": "dyn/arts/maps/multi_player/res/materials/mt_bg_multi_player.mat"
         },
         {
           "name": "multiplayer-fog-light",
@@ -112,7 +116,9 @@
           "name": "common-background",
           "bundle": "arts/maps/common/meshes/s_background_common.ab",
           "assetPath": "dyn/arts/maps/common/meshes/s_background_common.fbx",
-          "layer": "environment"
+          "layer": "environment",
+          "materialBundle": "arts/maps/common/res.ab",
+          "materialAssetPath": "dyn/arts/maps/common/res/materials/mt_common_lungmen_d_01.mat"
         }
       ]
     }

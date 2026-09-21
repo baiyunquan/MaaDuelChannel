@@ -248,6 +248,10 @@ def _asset_config_records(
             "bundlePath": _safe_bundle_name(str(record["bundle"])),
             "assetPath": str(record["assetPath"]),
             "layer": str(record.get("layer", "environment")),
+            "materialBundlePath": (
+                _safe_bundle_name(str(record["materialBundle"])) if record.get("materialBundle") else ""
+            ),
+            "materialAssetPath": str(record.get("materialAssetPath", "")),
         }
         for record in roots
         if isinstance(record, dict) and record.get("name") and record.get("bundle") and record.get("assetPath")

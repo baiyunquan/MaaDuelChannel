@@ -14,6 +14,7 @@ namespace MaaDuelChannel.MapAssembler
         public float frameTime;
         public StageCellInput[] grid;
         public CameraProfileInput camera;
+        public WorldGridInput worldGrid;
         public string bundleRoot;
         public BundleFileInput[] bundleFiles;
         public string outputDirectory;
@@ -22,6 +23,18 @@ namespace MaaDuelChannel.MapAssembler
         public RouteEffectInput[] routeEffects;
         public EnvironmentRootInput[] environmentRoots;
         public string resourceManifestVersion;
+        public BundleCompatibilityInput bundleCompatibility;
+    }
+
+    [Serializable]
+    public sealed class WorldGridInput
+    {
+        public float[] origin;
+        public int columnDirection;
+        public int rowDirection;
+        public float columnPitch;
+        public float rowPitch;
+        public string evidence;
     }
 
     [Serializable]
@@ -65,6 +78,17 @@ namespace MaaDuelChannel.MapAssembler
         public string sha256;
         public string source;
         public int manifestIndex;
+        public string originalPath;
+        public string normalizedSha256;
+        public string normalization;
+    }
+
+    [Serializable]
+    public sealed class BundleCompatibilityInput
+    {
+        public string normalization;
+        public string unityPyVersion;
+        public string arkUnpackerCommit;
     }
 
     [Serializable]
@@ -98,6 +122,8 @@ namespace MaaDuelChannel.MapAssembler
         public string bundlePath;
         public string assetPath;
         public string layer;
+        public string materialBundlePath;
+        public string materialAssetPath;
     }
 
     public static class AssemblyInput
@@ -124,6 +150,13 @@ namespace MaaDuelChannel.MapAssembler
             if (input.camera == null || input.camera.profile == null)
             {
                 throw new InvalidDataException("Assembly input is missing the camera profile.");
+            }
+
+            if (input.worldGrid == null || input.worldGrid.origin == null || input.worldGrid.origin.Length != 3
+                || input.worldGrid.columnPitch <= 0f || input.worldGrid.rowPitch <= 0f
+                || Math.Abs(input.worldGrid.columnDirection) != 1 || Math.Abs(input.worldGrid.rowDirection) != 1)
+            {
+                throw new InvalidDataException("Assembly input is missing a valid world-grid transform.");
             }
 
             input.bundleFiles = input.bundleFiles ?? Array.Empty<BundleFileInput>();

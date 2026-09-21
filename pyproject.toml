@@ -18,6 +18,9 @@ ocr = ["rapidocr>=3.0", "onnxruntime>=1.20"]
 vision = ["ultralytics>=8.3"]
 cpu = ["torch>=2.7", "torchvision>=0.22"]
 cu128 = ["torch>=2.7", "torchvision>=0.22"]
+asset-bundles = [
+    "unitypy>=1.25,<2",
+]
 
 [project.scripts]
 duel = "maa_duel.cli:app"

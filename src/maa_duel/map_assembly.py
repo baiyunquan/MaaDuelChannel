@@ -245,6 +245,14 @@ def prepare_assembly_input(request: MapAssemblyRequest) -> Path:
             for cell in grid.cells
         ],
         "camera": camera,
+        "worldGrid": {
+            "origin": [0.0, 0.0, 0.0],
+            "columnDirection": -1,
+            "rowDirection": -1,
+            "columnPitch": 1.0,
+            "rowPitch": 1.0,
+            "evidence": "VS-2 cameraFocus (-7,-5) is the center of the 15x11 stage grid.",
+        },
         "bundleRoot": request.game_assets.as_posix(),
         "bundleFiles": [bundle.as_json() for bundle in asset_plan.bundle_files],
         "outputDirectory": request.output_dir.as_posix(),
@@ -273,6 +281,9 @@ def prepare_assembly_input(request: MapAssemblyRequest) -> Path:
 def run_unity_assembler(config_path: Path, output_dir: Path, unity_editor: Path | None = None) -> None:
     config_path = config_path.resolve(strict=True)
     output_dir = output_dir.resolve()
+    from .bundle_compat import prepare_unity_compatible_input
+
+    unity_config_path = prepare_unity_compatible_input(config_path, output_dir)
     editor = unity_editor or (Path(os.environ["UNITY_EDITOR"]) if os.environ.get("UNITY_EDITOR") else None)
     if editor is None:
         editor = DEFAULT_UNITY_EDITOR
@@ -294,7 +305,7 @@ def run_unity_assembler(config_path: Path, output_dir: Path, unity_editor: Path 
         "-executeMethod",
         "MaaDuelChannel.MapAssembler.DuelMapAssembler.Run",
         "-assemblyConfig",
-        str(config_path),
+        str(unity_config_path),
         "-logFile",
         str(log_path),
     ]
