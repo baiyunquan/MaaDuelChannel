@@ -15,7 +15,12 @@ from maa_duel.combat import (
 from maa_duel.dataset import PredictorSample, PredictorUnit
 from maa_duel.schema import Winner
 from maa_duel.training.features import CombatFeatureIndex, build_combat_feature_table
-from maa_duel.training.model import DuelTransformer, ModelConfig
+from maa_duel.training.model import (
+    DuelTransformer,
+    ModelConfig,
+    RelationFeatureIndex,
+    pairwise_relation_features,
+)
 from maa_duel.training.predictor import collate_samples
 
 
@@ -115,19 +120,74 @@ def test_model_is_antisymmetric_when_sides_are_swapped():
         forward = model(
             batch.left_ids,
             batch.left_positions,
+            batch.left_combat,
+            batch.left_combat_known,
             batch.left_mask,
             batch.right_ids,
             batch.right_positions,
+            batch.right_combat,
+            batch.right_combat_known,
             batch.right_mask,
         )
         swapped = model(
             batch.right_ids,
             batch.right_positions,
+            batch.right_combat,
+            batch.right_combat_known,
             batch.right_mask,
             batch.left_ids,
             batch.left_positions,
+            batch.left_combat,
+            batch.left_combat_known,
             batch.left_mask,
         )
 
     assert torch.allclose(forward, -swapped, atol=1e-6)
     assert torch.allclose(torch.sigmoid(forward), 1 - torch.sigmoid(swapped), atol=1e-6)
+
+
+def test_pairwise_relations_express_enemy_matchups_and_friendly_synergy():
+    positions = torch.tensor([[[0.2, 0.5], [0.25, 0.5], [0.3, 0.5]]])
+    combat = torch.zeros((1, 3, len(CombatFeatureIndex)))
+    combat[0, 0, CombatFeatureIndex.ATTACK] = 1
+    combat[0, 0, CombatFeatureIndex.PHYSICAL] = 1
+    combat[0, 0, CombatFeatureIndex.STUN] = 1
+    combat[0, 0, CombatFeatureIndex.DEFENSE_SHRED] = 1
+    combat[0, 1, CombatFeatureIndex.STATUS_IMMUNITY] = 1
+    combat[0, 2, CombatFeatureIndex.PHYSICAL] = 1
+    sides = torch.tensor([[0, 1, 0]])
+    known = torch.ones((1, 3), dtype=torch.bool)
+
+    relations = pairwise_relation_features(positions, combat, known, sides)
+
+    assert relations[0, 0, 1, RelationFeatureIndex.OPPONENT].item() == 1
+    assert relations[0, 0, 1, RelationFeatureIndex.PHYSICAL_EFFECTIVENESS].item() > 0
+    assert relations[0, 0, 1, RelationFeatureIndex.CONTROL_PRESSURE].item() == 0
+    assert relations[0, 0, 2, RelationFeatureIndex.SAME_SIDE].item() == 1
+    assert relations[0, 0, 2, RelationFeatureIndex.DEFENSE_SHRED_SYNERGY].item() == 1
+
+
+def test_combat_and_relation_encoders_receive_gradients_from_basic_batch():
+    torch.manual_seed(2)
+    model = DuelTransformer(ModelConfig(num_enemy_ids=10, embedding_dim=32, heads=4, layers=1, dropout=0.0))
+    batch = collate_samples(
+        [sample("a" * 32, Winner.LEFT)],
+        build_combat_feature_table(combat_knowledge(), num_enemy_ids=10, knowledge_sha256="a" * 64),
+    )
+
+    logits = model(
+        batch.left_ids,
+        batch.left_positions,
+        batch.left_combat,
+        batch.left_combat_known,
+        batch.left_mask,
+        batch.right_ids,
+        batch.right_positions,
+        batch.right_combat,
+        batch.right_combat_known,
+        batch.right_mask,
+    )
+    logits.sum().backward()
+
+    assert torch.count_nonzero(model.combat_encoder[0].weight.grad).item() > 0
+    assert torch.count_nonzero(model.relation_encoder[0].weight.grad).item() > 0
