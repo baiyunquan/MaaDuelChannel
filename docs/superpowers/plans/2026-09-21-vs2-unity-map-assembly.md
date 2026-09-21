@@ -13,6 +13,7 @@
 ## Global Constraints
 
 - Use Unity Editor `2021.3.39f1` for the game’s Windows AssetBundles.
+- Pass `-noUpm` to Editor batch runs: the installed Package Manager returned HTTP 500 for both this project and a fresh empty project, while this assembler uses no external UPM packages.
 - Build `activities/act1enemyduel/level_act1enemyduel_02a` from its 15-column by 11-row map grid.
 - Preserve all 165 tile indices and the confirmed counts: 99 `tile_infection_dqq`, 48 `tile_forbidden`, 9 `tile_start_dqq`, 9 `tile_end_dqq`.
 - Keep the confirmed endpoint coordinates: `tile_start_dqq` at source column 1 and `tile_end_dqq` at source column 13 for rows 1–9; align red/blue semantics to the reference frame.
@@ -74,7 +75,7 @@ Add these repository-relative ignores: `unity/map-assembler/Library/`, `Temp/`, 
 Run:
 
 ```powershell
-& 'D:\Unity\Hub\Editor\2021.3.39f1\Editor\Unity.exe' -batchmode -quit -projectPath 'C:\Users\liaic\Source\Repos\MaaAssistantArknights\tools\MaaDuelChannel\unity\map-assembler' -logFile 'D:\MAA-DuelChannel\workspace\tools\unity-map-assembler\logs\project-import.log'
+& 'D:\Unity\Hub\Editor\2021.3.39f1\Editor\Unity.exe' -batchmode -quit -noUpm -projectPath 'C:\Users\liaic\Source\Repos\MaaAssistantArknights\tools\MaaDuelChannel\unity\map-assembler' -logFile 'D:\MAA-DuelChannel\workspace\tools\unity-map-assembler\logs\project-import.log'
 ```
 
 Expected: Editor exits successfully and the project log contains no compile errors.
@@ -182,7 +183,7 @@ Instantiate the multiplayer-specific route/endpoint effects from `battle/prefabs
 
 - [ ] **Step 5: Run the Unity Editor entry point with the canonical input**
 
-Launch Unity in batch mode with `-projectPath`, `-executeMethod MaaDuelChannel.MapAssembler.DuelMapAssembler.Run`, and `-assemblyConfig <canonical-json-path>`. Inspect Editor logs and the temporary scene hierarchy for all 165 cells and both sets of nine endpoint cells.
+Launch Unity in batch mode with `-noUpm`, `-projectPath`, `-executeMethod MaaDuelChannel.MapAssembler.DuelMapAssembler.Run`, and `-assemblyConfig <canonical-json-path>`. Inspect Editor logs and the temporary scene hierarchy for all 165 cells and both sets of nine endpoint cells.
 
 ### Task 5: Assemble the LMC day environment and camera
 
@@ -259,7 +260,7 @@ Write the stage key, theme, Unity version, input hashes, resolved bundle paths/h
 
 - [ ] **Step 1: Complete process launch and log handling**
 
-Use the explicit Editor path when supplied, otherwise resolve `UNITY_EDITOR` and then the `2021.3.39f1` default install path. Pass all user paths as separate subprocess arguments; save Unity output to `output_dir/logs/map-assembly.log`. Return nonzero when Unity exits nonzero or required artifacts are absent.
+Use the explicit Editor path when supplied, otherwise resolve `UNITY_EDITOR` and then the `2021.3.39f1` default install path. Pass `-noUpm` and all user paths as separate subprocess arguments; save Unity output to `output_dir/logs/map-assembly.log`. Return nonzero when Unity exits nonzero or required artifacts are absent.
 
 - [ ] **Step 2: Render VS-2 with local game and ArknightsResource inputs**
 

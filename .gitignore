@@ -20,3 +20,10 @@ workspace/
 data/
 assets/cache/
 .worktrees/
+unity/map-assembler/Library/
+unity/map-assembler/Temp/
+unity/map-assembler/Obj/
+unity/map-assembler/Logs/
+unity/map-assembler/UserSettings/
+unity/map-assembler/Build/
+unity/map-assembler/ProjectSettings/boot.config

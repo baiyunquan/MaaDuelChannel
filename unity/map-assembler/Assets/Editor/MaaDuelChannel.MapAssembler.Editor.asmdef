@@ -1,0 +1,14 @@
+{
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "overrideReferences": false,
+  "allowUnsafeCode": false,
+  "autoReferenced": true,
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "defineConstraints": [],
+  "precompiledReferences": [],
+  "name": "MaaDuelChannel.MapAssembler.Editor"
+}
