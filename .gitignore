@@ -19,3 +19,4 @@ build/
 workspace/
 data/
 assets/cache/
+.worktrees/
