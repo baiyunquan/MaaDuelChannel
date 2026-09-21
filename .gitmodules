@@ -1,3 +1,6 @@
 [submodule "vendor/ark_info_search"]
 	path = vendor/ark_info_search
 	url = https://github.com/baiyunquan/ark_info_search.git
+[submodule "vendor/Ark-Unpacker"]
+	path = vendor/Ark-Unpacker
+	url = https://github.com/isHarryh/Ark-Unpacker.git

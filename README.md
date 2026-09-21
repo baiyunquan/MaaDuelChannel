@@ -90,6 +90,23 @@ uv run duel assets fetch-prts-combat --workspace D:\MAA-DuelChannel\workspace
 
 PRTS 页面说明游戏图片、动画等版权归鹰角网络及其关联公司所有。此命令只把素材写入外部 workspace，不会把图片或模型加入 Git；见 [PRTS 版权说明](https://prts.wiki/w/PRTS:%E7%89%88%E6%9D%83)。
 
+### 解包本机 PC 客户端资源
+
+`vendor/Ark-Unpacker` 是独立的 Git submodule，并递归包含其 Ark-FBS-Py 依赖。初始化后运行：
+
+~~~powershell
+git submodule update --init --recursive vendor/Ark-Unpacker
+uv run python scripts/unpack_game_assets.py `
+  --game-root "E:\Program Files\Arknights" `
+  --workspace D:\MAA-DuelChannel\workspace
+~~~
+
+脚本读取 PC 客户端的 `Arknights_Data/StreamingAssets/AB/Windows` 和 `Arknights_Data/PersistentData/Bundles`，同名热更新包覆盖初始包。它只暂存并解包 `battle` Spine、`spritepack/icon_enemies*`、`ui/enemyduel` 和 `arts/ui/stage_mappreview_*_duel_*`，不扫描或解包整个 24 GB 游戏资源目录。Ark-Unpacker 的 Python 3.12 环境和依赖锁保存在 workspace 的 `tools/ark-unpacker` 下。
+
+每次解包输出到 `assets/game_assets/runs/<UTC时间>/`，包含独立的 `battlefield_spine`、`roster_icons`、`duel_ui`、`duel_stage_previews` 目录及哈希清单。脚本用 PRTS Spine 文件名尝试匹配游戏战斗模型并记录结果；它不会把选手头像和战斗模型混写，也不会覆盖 PRTS 资源目录。Duel 预览图按客户端原始包名保存为候选素材，只有核实与 VS-2 地图对应后再登记为该地图背景。
+
+游戏文件及解包结果只保存在本地 workspace，不加入 Git。脚本、依赖锁和第三方工具 submodule 保存在 MaaDuelChannel 仓库。
+
 准备一张或多张无单位的绿藤城背景，然后同步素材：
 
 ~~~powershell
