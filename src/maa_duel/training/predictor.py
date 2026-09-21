@@ -17,6 +17,7 @@ from maa_duel.contracts import ModelVersion, sha256_file, write_contract
 from maa_duel.dataset import PredictorSample
 from maa_duel.schema import Winner
 from maa_duel.store import read_jsonl
+from maa_duel.training.features import COMBAT_FEATURE_DIM, CombatFeatureTable
 from maa_duel.training.model import DuelTransformer, ModelConfig
 
 
@@ -24,9 +25,13 @@ from maa_duel.training.model import DuelTransformer, ModelConfig
 class TensorBatch:
     left_ids: torch.Tensor
     left_positions: torch.Tensor
+    left_combat: torch.Tensor
+    left_combat_known: torch.Tensor
     left_mask: torch.Tensor
     right_ids: torch.Tensor
     right_positions: torch.Tensor
+    right_combat: torch.Tensor
+    right_combat_known: torch.Tensor
     right_mask: torch.Tensor
     labels: torch.Tensor
 
@@ -45,7 +50,7 @@ class PredictorDataset(Dataset):
         return self.samples[index]
 
 
-def collate_samples(samples: list[PredictorSample]) -> TensorBatch:
+def collate_samples(samples: list[PredictorSample], combat_table: CombatFeatureTable | None = None) -> TensorBatch:
     if not samples:
         raise ValueError("cannot collate an empty batch")
     batch_size = len(samples)
@@ -55,6 +60,11 @@ def collate_samples(samples: list[PredictorSample]) -> TensorBatch:
     right_ids = torch.zeros((batch_size, max_right), dtype=torch.long)
     left_positions = torch.zeros((batch_size, max_left, 2), dtype=torch.float32)
     right_positions = torch.zeros((batch_size, max_right, 2), dtype=torch.float32)
+    feature_dim = combat_table.features.shape[1] if combat_table else COMBAT_FEATURE_DIM
+    left_combat = torch.zeros((batch_size, max_left, feature_dim), dtype=torch.float32)
+    right_combat = torch.zeros((batch_size, max_right, feature_dim), dtype=torch.float32)
+    left_combat_known = torch.zeros((batch_size, max_left), dtype=torch.bool)
+    right_combat_known = torch.zeros((batch_size, max_right), dtype=torch.bool)
     left_mask = torch.zeros((batch_size, max_left), dtype=torch.bool)
     right_mask = torch.zeros((batch_size, max_right), dtype=torch.bool)
     labels = torch.zeros(batch_size, dtype=torch.float32)
@@ -63,19 +73,29 @@ def collate_samples(samples: list[PredictorSample]) -> TensorBatch:
         for unit_index, unit in enumerate(sample.left_units):
             left_ids[batch_index, unit_index] = unit.enemy_id
             left_positions[batch_index, unit_index] = torch.tensor((unit.x, unit.y))
+            if combat_table and unit.enemy_id < combat_table.features.shape[0]:
+                left_combat[batch_index, unit_index] = combat_table.features[unit.enemy_id]
+                left_combat_known[batch_index, unit_index] = combat_table.known[unit.enemy_id]
             left_mask[batch_index, unit_index] = True
         for unit_index, unit in enumerate(sample.right_units):
             right_ids[batch_index, unit_index] = unit.enemy_id
-            right_positions[batch_index, unit_index] = torch.tensor((1.0 - unit.x, unit.y))
+            right_positions[batch_index, unit_index] = torch.tensor((unit.x, unit.y))
+            if combat_table and unit.enemy_id < combat_table.features.shape[0]:
+                right_combat[batch_index, unit_index] = combat_table.features[unit.enemy_id]
+                right_combat_known[batch_index, unit_index] = combat_table.known[unit.enemy_id]
             right_mask[batch_index, unit_index] = True
         labels[batch_index] = 1.0 if sample.winner is Winner.LEFT else 0.0
 
     return TensorBatch(
         left_ids=left_ids,
         left_positions=left_positions,
+        left_combat=left_combat,
+        left_combat_known=left_combat_known,
         left_mask=left_mask,
         right_ids=right_ids,
         right_positions=right_positions,
+        right_combat=right_combat,
+        right_combat_known=right_combat_known,
         right_mask=right_mask,
         labels=labels,
     )

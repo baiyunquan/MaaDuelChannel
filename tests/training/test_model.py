@@ -1,8 +1,20 @@
+from datetime import UTC, datetime
+
 import pytest
 import torch
 
+from maa_duel.combat import (
+    AttackMode,
+    CombatKnowledge,
+    CombatStats,
+    DamageType,
+    EnemyCombatProfile,
+    MechanicKind,
+    StageRules,
+)
 from maa_duel.dataset import PredictorSample, PredictorUnit
 from maa_duel.schema import Winner
+from maa_duel.training.features import CombatFeatureIndex, build_combat_feature_table
 from maa_duel.training.model import DuelTransformer, ModelConfig
 from maa_duel.training.predictor import collate_samples
 
@@ -20,7 +32,54 @@ def sample(sample_id, winner, left_x=0.2, right_x=0.8):
     )
 
 
-def test_collate_dynamically_pads_and_mirrors_right_coordinates():
+def combat_knowledge():
+    return CombatKnowledge(
+        stage_id="VS-2",
+        stage_title="争锋对决！",
+        source_page="https://prts.wiki/w/VS-2",
+        source_revision=1,
+        fetched_at=datetime(2026, 9, 21, tzinfo=UTC),
+        rules=StageRules(raw_text=""),
+        enemies=[
+            EnemyCombatProfile(
+                enemy_id=1,
+                display_name="测试单位",
+                portrait_name="测试单位原型",
+                page_name="测试单位原型",
+                count_raw="1~99",
+                stats=CombatStats(
+                    hp=10000,
+                    attack=1000,
+                    defense=500,
+                    resistance=30,
+                    attack_interval=2,
+                    weight=3,
+                    move_speed=1,
+                    attack_radius=2.5,
+                ),
+                attack_modes=[AttackMode.RANGED],
+                damage_types=[DamageType.PHYSICAL],
+                mechanics=[MechanicKind.DEFENSE_SHRED],
+            )
+        ],
+    )
+
+
+def test_feature_table_encodes_stats_attributes_and_explicit_unknowns():
+    table = build_combat_feature_table(combat_knowledge(), num_enemy_ids=10, knowledge_sha256="a" * 64)
+
+    assert table.features.shape == (10, len(CombatFeatureIndex))
+    assert table.known.tolist() == [False, True, False, False, False, False, False, False, False, False]
+    assert table.features[1, CombatFeatureIndex.HP].item() > 0
+    assert table.features[1, CombatFeatureIndex.PHYSICAL].item() == 1
+    assert table.features[1, CombatFeatureIndex.DEFENSE_SHRED].item() == 1
+    assert torch.count_nonzero(table.features[2]).item() == 0
+    assert table.feature_version == "combat-v1"
+    assert table.knowledge_sha256 == "a" * 64
+
+
+def test_collate_dynamically_pads_and_keeps_shared_battlefield_coordinates():
+    combat_table = build_combat_feature_table(combat_knowledge(), num_enemy_ids=10, knowledge_sha256="a" * 64)
     batch = collate_samples(
         [
             sample("a" * 32, Winner.LEFT),
@@ -31,14 +90,18 @@ def test_collate_dynamically_pads_and_mirrors_right_coordinates():
                 right_units=[PredictorUnit(enemy_id=6, x=0.9, y=0.6)],
                 winner=Winner.RIGHT,
             ),
-        ]
+        ],
+        combat_table,
     )
 
     assert batch.left_ids.shape == (2, 2)
     assert batch.right_ids.shape == (2, 2)
     assert batch.left_mask.tolist() == [[True, False], [True, True]]
     assert batch.right_mask.tolist() == [[True, True], [True, False]]
-    assert batch.right_positions[0, 0, 0].item() == pytest.approx(0.2)
+    assert batch.right_positions[0, 0, 0].item() == pytest.approx(0.8)
+    assert batch.left_combat_known.tolist() == [[True, False], [False, False]]
+    assert batch.right_combat_known.tolist() == [[False, False], [False, False]]
+    assert batch.left_combat[0, 0, CombatFeatureIndex.PHYSICAL].item() == 1
     assert batch.labels.tolist() == [1.0, 0.0]
 
 
