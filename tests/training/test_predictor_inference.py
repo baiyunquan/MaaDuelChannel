@@ -150,7 +150,7 @@ def test_checkpoint_load_prediction_uses_label_free_state_and_exports_relations(
 
     assert result.left_win_probability + result.right_win_probability == pytest.approx(1.0)
     assert result.feature_version == "combat-v2"
-    assert result.formula_version == "derived-v1"
+    assert result.formula_version == "derived-v2"
     assert result.explain is not None
     assert result.explain[0]["source_instance_id"] == "left-tank"
     assert {"physical_dps", "arts_dps", "true_dps", "sustained_ttk", "screening_score"} <= set(result.explain[0])

@@ -14,6 +14,7 @@ from maa_duel.training.features import OPENING_WINDOW_SECONDS, CombatFeatureInde
 TIME_LIMIT_SECONDS = 300.0
 ATTACK_COUNT_LIMIT = 10_000.0
 SCREENING_LANE_WIDTH = 0.75
+SCREENING_MOBILITY_BUFFER = 0.75
 PROTECTION_WINDOW_SECONDS = 10.0
 
 
@@ -27,6 +28,8 @@ def formula_sha256() -> str:
         "attack_count_limit": ATTACK_COUNT_LIMIT,
         "target_softmax_temperature": 1.0,
         "screening_lane_width": SCREENING_LANE_WIDTH,
+        "screening_mobility_buffer": SCREENING_MOBILITY_BUFFER,
+        "screening_mobility_formula": "smoothstep(retained_initial_lead_after_projected_advance)",
         "protection_window_seconds": PROTECTION_WINDOW_SECONDS,
         "relation_features": [item.name for item in RelationFeatureIndex],
         "formation_features": [item.name for item in FormationFeatureIndex],
@@ -287,6 +290,31 @@ def _screening(
                         continue
                     perpendicular = torch.linalg.vector_norm(relative - t * line)
                     lane = math.exp(-0.5 * (float(perpendicular) / SCREENING_LANE_WIDTH) ** 2)
+                    initial_lead = t * math.sqrt(denominator)
+                    threat_horizon = min(
+                        float(time_to_range[batch, enemy, protected]),
+                        PROTECTION_WINDOW_SECONDS,
+                    )
+                    protector_move_time = min(
+                        threat_horizon,
+                        float(time_to_range[batch, protector, enemy]),
+                    )
+                    protected_move_time = min(
+                        threat_horizon,
+                        float(time_to_range[batch, protected, enemy]),
+                    )
+                    protector_advance = (
+                        float(raw[batch, protector, CombatFeatureIndex.MOVE_SPEED]) * protector_move_time
+                    )
+                    protected_advance = (
+                        float(raw[batch, protected, CombatFeatureIndex.MOVE_SPEED]) * protected_move_time
+                    )
+                    lost_lead = max(0.0, protected_advance - protector_advance)
+                    retained_lead = max(
+                        0.0,
+                        min(1.0, 1.0 - lost_lead / max(initial_lead, SCREENING_MOBILITY_BUFFER)),
+                    )
+                    mobility_offset = retained_lead * retained_lead * (3.0 - 2.0 * retained_lead)
                     contact_advantage = torch.sigmoid(
                         time_to_range[batch, enemy, protected] - time_to_range[batch, enemy, protector]
                     )
@@ -294,7 +322,7 @@ def _screening(
                     threat = float(pairs[batch, enemy, protected, :3].sum()) * max(
                         float(allocation[batch, enemy, protected]), 1e-6
                     )
-                    weighted_geometry += threat * lane * intercept
+                    weighted_geometry += threat * lane * intercept * mobility_offset
                     threat_total += threat
                 if threat_total > 0:
                     score[batch, protector, protected] = min(1.0, weighted_geometry / threat_total)

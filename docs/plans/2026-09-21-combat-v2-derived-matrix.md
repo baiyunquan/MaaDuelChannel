@@ -31,6 +31,9 @@ twenty directed relation features, and explicit validity metadata.
 - Implement target-capacity allocation, opening damage, control uptime, healing,
   counterfactual debuff gain, screening, protection time, and the fixed 12 formation
   summaries.
+- Correct screening with a projected movement offset: estimate each ally's advance until
+  first threat contact or its own range stop, then smoothly reduce screening when a slower
+  protector consumes its initial lead over the protected unit.
 - Add monotonicity, multihit, capacity, permutation, grouping, and screening tests before
   implementation.
 

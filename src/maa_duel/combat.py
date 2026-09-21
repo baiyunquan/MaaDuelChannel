@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 COMBAT_FEATURE_VERSION = "combat-v2"
-DERIVED_FORMULA_VERSION = "derived-v1"
+DERIVED_FORMULA_VERSION = "derived-v2"
 
 
 class AttackMode(StrEnum):
@@ -296,7 +296,7 @@ class CombatKnowledge(BaseModel):
 
     schema_version: Literal[2] = 2
     feature_version: Literal["combat-v2"] = COMBAT_FEATURE_VERSION
-    formula_version: Literal["derived-v1"] = DERIVED_FORMULA_VERSION
+    formula_version: Literal["derived-v2"] = DERIVED_FORMULA_VERSION
     stage_id: str
     stage_title: str
     source_page: str

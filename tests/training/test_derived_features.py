@@ -22,7 +22,18 @@ from maa_duel.training.derived import (
 from maa_duel.training.features import PairFeatureIndex, build_combat_feature_table
 
 
-def profile(enemy_id, *, hp=10_000, attack=1_000, defense=0, resistance=0, interval=1, radius=1, actions=None):
+def profile(
+    enemy_id,
+    *,
+    hp=10_000,
+    attack=1_000,
+    defense=0,
+    resistance=0,
+    interval=1,
+    radius=1,
+    move_speed=1,
+    actions=None,
+):
     if actions is None:
         actions = [
             AttackAction(
@@ -45,7 +56,7 @@ def profile(enemy_id, *, hp=10_000, attack=1_000, defense=0, resistance=0, inter
             resistance=resistance,
             attack_interval=interval,
             weight=1,
-            move_speed=1,
+            move_speed=move_speed,
             attack_radius=radius,
         ),
         opening_attacks=actions,
@@ -171,8 +182,8 @@ def test_time_to_range_stops_longer_range_target_before_short_range_source_arriv
 
 
 def test_formation_density_and_screening_respond_to_geometry_and_survival():
-    weak = table(profile(1, hp=2_000), profile(2, hp=4_000), profile(3, attack=800))
-    strong = table(profile(1, hp=20_000), profile(2, hp=4_000), profile(3, attack=800))
+    weak = table(profile(1, hp=2_000), profile(2, hp=4_000, radius=3), profile(3, attack=800))
+    strong = table(profile(1, hp=20_000), profile(2, hp=4_000, radius=3), profile(3, attack=800))
     ids = torch.tensor([[1, 2, 3]])
     sides = torch.tensor([[0, 0, 1]])
     valid = torch.ones((1, 3), dtype=torch.bool)
@@ -191,6 +202,61 @@ def test_formation_density_and_screening_respond_to_geometry_and_survival():
     )
     assert aligned.shape[-1] == 2
     assert strong_aligned.formation.shape[-1] == len(FormationFeatureIndex) == 12
+
+
+def test_screening_mobility_offset_penalizes_a_slow_frontliner_that_loses_its_lead():
+    slow = table(
+        profile(1, hp=100_000, radius=0.8, move_speed=0.4),
+        profile(2, radius=3.0, move_speed=1.0),
+        profile(3, radius=1.0, move_speed=1.0),
+    )
+    fast = table(
+        profile(1, hp=100_000, radius=0.8, move_speed=1.0),
+        profile(2, radius=3.0, move_speed=1.0),
+        profile(3, radius=1.0, move_speed=1.0),
+    )
+    ids = torch.tensor([[1, 2, 3]])
+    positions = torch.tensor([[[4.0, 3.0], [2.0, 3.0], [10.0, 3.0]]])
+    sides = torch.tensor([[0, 0, 1]])
+    valid = torch.ones((1, 3), dtype=torch.bool)
+
+    slow_features = build_derived_battle_features(ids, positions, sides, valid, slow)
+    fast_features = build_derived_battle_features(ids, positions, sides, valid, fast)
+    slow_screening = slow_features.relations[0, 0, 1, RelationFeatureIndex.SCREENING_SCORE]
+    fast_screening = fast_features.relations[0, 0, 1, RelationFeatureIndex.SCREENING_SCORE]
+
+    assert fast_screening > 0.8
+    assert slow_screening < fast_screening * 0.7
+    assert (
+        slow_features.relations[0, 0, 1, RelationFeatureIndex.PROTECTION_SECONDS]
+        < fast_features.relations[0, 0, 1, RelationFeatureIndex.PROTECTION_SECONDS] * 0.7
+    )
+
+
+def test_screening_mobility_offset_stops_accumulating_when_the_ranged_unit_stops():
+    standard_range = table(
+        profile(1, hp=100_000, radius=0.8, move_speed=0.4),
+        profile(2, radius=3.0, move_speed=1.0),
+        profile(3, radius=1.0, move_speed=1.0),
+    )
+    long_range = table(
+        profile(1, hp=100_000, radius=0.8, move_speed=0.4),
+        profile(2, radius=6.0, move_speed=1.0),
+        profile(3, radius=1.0, move_speed=1.0),
+    )
+    ids = torch.tensor([[1, 2, 3]])
+    positions = torch.tensor([[[4.0, 3.0], [2.0, 3.0], [10.0, 3.0]]])
+    sides = torch.tensor([[0, 0, 1]])
+    valid = torch.ones((1, 3), dtype=torch.bool)
+
+    standard_features = build_derived_battle_features(ids, positions, sides, valid, standard_range)
+    long_range_features = build_derived_battle_features(ids, positions, sides, valid, long_range)
+
+    assert (
+        long_range_features.relations[0, 0, 1, RelationFeatureIndex.SCREENING_SCORE]
+        > standard_features.relations[0, 0, 1, RelationFeatureIndex.SCREENING_SCORE]
+    )
+    assert long_range_features.relations[0, 0, 1, RelationFeatureIndex.SCREENING_SCORE] > 0.85
 
 
 def test_grouping_changes_density_and_aoe_coverage_without_changing_roster():
