@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -13,11 +14,12 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+from maa_duel.combat import load_combat_knowledge
 from maa_duel.contracts import ModelVersion, sha256_file, write_contract
 from maa_duel.dataset import PredictorSample
 from maa_duel.schema import Winner
 from maa_duel.store import read_jsonl
-from maa_duel.training.features import COMBAT_FEATURE_DIM, CombatFeatureTable
+from maa_duel.training.features import COMBAT_FEATURE_DIM, CombatFeatureTable, build_combat_feature_table
 from maa_duel.training.model import DuelTransformer, ModelConfig
 
 
@@ -120,6 +122,8 @@ def _checkpoint(
     optimizer: torch.optim.Optimizer,
     epoch: int,
     dataset_sha256: str,
+    feature_version: str,
+    knowledge_sha256: str,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -129,6 +133,8 @@ def _checkpoint(
             "model_config": asdict(config),
             "epoch": epoch,
             "dataset_sha256": dataset_sha256,
+            "feature_version": feature_version,
+            "knowledge_sha256": knowledge_sha256,
             "git_commit": _git_commit(),
         },
         path,
@@ -167,6 +173,15 @@ def train_predictor_model(
             f"accepted/written/training count mismatch: "
             f"{metadata.get('accepted_samples')}/{metadata.get('written_samples')}/{len(samples)}"
         )
+    knowledge_path = workspace / "assets" / "combat" / "vs2_enemy_combat.json"
+    if not knowledge_path.is_file():
+        raise FileNotFoundError(f"combat knowledge is missing: {knowledge_path}")
+    knowledge_sha256 = sha256_file(knowledge_path)
+    knowledge = load_combat_knowledge(knowledge_path)
+    if metadata.get("feature_version") != knowledge.feature_version:
+        raise ValueError("predictor dataset feature version does not match combat knowledge")
+    if metadata.get("knowledge_sha256") != knowledge_sha256:
+        raise ValueError("predictor dataset knowledge hash does not match current combat knowledge")
 
     random.seed(seed)
     np.random.seed(seed)
@@ -183,7 +198,16 @@ def train_predictor_model(
     if cuda_enabled:
         torch.backends.cuda.matmul.allow_tf32 = tf32
         torch.backends.cudnn.allow_tf32 = tf32
-    maximum_enemy_id = max(unit.enemy_id for sample in samples for unit in (*sample.left_units, *sample.right_units))
+    sample_maximum_enemy_id = max(
+        unit.enemy_id for sample in samples for unit in (*sample.left_units, *sample.right_units)
+    )
+    knowledge_maximum_enemy_id = max((profile.enemy_id or 0 for profile in knowledge.enemies), default=0)
+    maximum_enemy_id = max(sample_maximum_enemy_id, knowledge_maximum_enemy_id)
+    combat_table = build_combat_feature_table(
+        knowledge,
+        num_enemy_ids=maximum_enemy_id + 1,
+        knowledge_sha256=knowledge_sha256,
+    )
     config = ModelConfig(
         num_enemy_ids=maximum_enemy_id + 1,
         embedding_dim=embedding_dim,
@@ -198,7 +222,7 @@ def train_predictor_model(
         PredictorDataset(samples),
         batch_size=min(batch_size, len(samples)),
         shuffle=True,
-        collate_fn=collate_samples,
+        collate_fn=partial(collate_samples, combat_table=combat_table),
         generator=loader_generator,
         num_workers=workers,
         pin_memory=pin_memory and cuda_enabled,
@@ -233,9 +257,13 @@ def train_predictor_model(
                 logits = training_model(
                     batch.left_ids,
                     batch.left_positions,
+                    batch.left_combat,
+                    batch.left_combat_known,
                     batch.left_mask,
                     batch.right_ids,
                     batch.right_positions,
+                    batch.right_combat,
+                    batch.right_combat_known,
                     batch.right_mask,
                 )
                 loss = criterion(logits, batch.labels)
@@ -249,7 +277,16 @@ def train_predictor_model(
         epoch_loss = total_loss / seen
         epoch_accuracy = correct / seen
         history.append({"epoch": epoch, "train_loss": epoch_loss, "train_accuracy": epoch_accuracy})
-        _checkpoint(model_dir / "last.pt", model, config, optimizer, epoch, metadata["dataset_sha256"])
+        _checkpoint(
+            model_dir / "last.pt",
+            model,
+            config,
+            optimizer,
+            epoch,
+            metadata["dataset_sha256"],
+            knowledge.feature_version,
+            knowledge_sha256,
+        )
         if epoch_loss < best_loss:
             best_loss = epoch_loss
             _checkpoint(
@@ -259,13 +296,21 @@ def train_predictor_model(
                 optimizer,
                 epoch,
                 metadata["dataset_sha256"],
+                knowledge.feature_version,
+                knowledge_sha256,
             )
 
+    unit_ids = [unit.enemy_id for sample in samples for unit in (*sample.left_units, *sample.right_units)]
+    known_units = sum(bool(combat_table.known[enemy_id]) for enemy_id in unit_ids)
     report: dict[str, object] = {
         "training_samples": len(samples),
         "validation_samples": 0,
         "test_samples": 0,
         "dataset_sha256": metadata["dataset_sha256"],
+        "feature_version": knowledge.feature_version,
+        "knowledge_sha256": knowledge_sha256,
+        "knowledge_manifest": knowledge_path.relative_to(workspace).as_posix(),
+        "knowledge_coverage": {"known_units": known_units, "total_units": len(unit_ids)},
         "device": str(selected_device),
         "precision": amp_dtype if amp_enabled else "float32",
         "gpu": {
@@ -297,7 +342,7 @@ def train_predictor_model(
         model_version=model_version,
         task="predictor",
         dataset_version=metadata.get("dataset_version"),
-        base_model="DuelTransformer",
+        base_model="CombatAwareDuelTransformer",
         checkpoint=version_checkpoint.relative_to(workspace).as_posix(),
         checkpoint_sha256=sha256_file(version_checkpoint),
         device=str(selected_device),
@@ -314,6 +359,9 @@ def train_predictor_model(
             "tf32": tf32,
             "seed": seed,
         },
+        feature_version=knowledge.feature_version,
+        knowledge_manifest=knowledge_path.relative_to(workspace).as_posix(),
+        knowledge_sha256=knowledge_sha256,
         git_commit=_git_commit(),
     )
     write_contract(version_dir / "model.json", contract)

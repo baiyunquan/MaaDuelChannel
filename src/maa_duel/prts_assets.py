@@ -83,8 +83,9 @@ class PrtsClient:
                     "titles": "|".join(titles[offset : offset + 50]),
                     "prop": "imageinfo|revisions",
                     "iiprop": "url",
-                    "rvprop": "content",
+                    "rvprop": "ids|timestamp|content",
                     "rvslots": "main",
+                    "redirects": "1",
                     "format": "json",
                     "formatversion": "2",
                 }

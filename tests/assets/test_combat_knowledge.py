@@ -2,7 +2,13 @@ from datetime import UTC, datetime
 
 from maa_duel.assets import AssetManifest, EnemyAsset
 from maa_duel.combat import AttackMode, DamageType, MechanicKind, load_combat_knowledge, save_combat_knowledge
-from maa_duel.prts_combat import compile_combat_knowledge, parse_enemy_wikitext, parse_stage_wikitext
+from maa_duel.prts_combat import (
+    PRTS_STAGE_TITLE,
+    compile_combat_knowledge,
+    parse_enemy_wikitext,
+    parse_stage_wikitext,
+    sync_prts_combat_knowledge,
+)
 
 STAGE_WIKITEXT = """{{普通关卡信息
 |关卡代号=VS-2
@@ -98,3 +104,40 @@ def test_compiled_knowledge_maps_stage_names_to_asset_ids_and_round_trips(tmp_pa
     ]
     assert loaded.source_revision == 456
     assert len(digest) == 64
+
+
+def test_sync_writes_complete_table_from_stage_and_enemy_revisions(tmp_path):
+    workspace = tmp_path / "workspace"
+    assets = AssetManifest(
+        source_catalog="file:///catalog.csv",
+        source_catalog_sha256="a" * 64,
+        enemies=[EnemyAsset(enemy_id=42, name="流鼻涕虫虫", original_name="酸液源石虫·α")],
+    )
+    (workspace / "assets").mkdir(parents=True)
+    (workspace / "assets" / "catalog.json").write_text(assets.model_dump_json(), encoding="utf-8")
+
+    class FakeClient:
+        def query_pages(self, titles):
+            if titles == [PRTS_STAGE_TITLE]:
+                return {
+                    PRTS_STAGE_TITLE.casefold(): {
+                        "title": PRTS_STAGE_TITLE,
+                        "revisions": [{"revid": 456, "slots": {"main": {"content": STAGE_WIKITEXT}}}],
+                    }
+                }
+            assert titles == ["酸液源石虫·α"]
+            return {
+                "酸液源石虫·α".casefold(): {
+                    "title": "酸液源石虫·α",
+                    "revisions": [{"revid": 123, "slots": {"main": {"content": ENEMY_WIKITEXT}}}],
+                }
+            }
+
+    result = sync_prts_combat_knowledge(workspace, client=FakeClient())
+    loaded = load_combat_knowledge(result.path)
+
+    assert result.profile_count == 1
+    assert result.mapped_profile_count == 1
+    assert result.missing_page_names == ()
+    assert loaded.enemies[0].stats.hp == 2780
+    assert loaded.enemies[0].source_revision == 123

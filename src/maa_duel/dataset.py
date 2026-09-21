@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from maa_duel.combat import load_combat_knowledge
 from maa_duel.contracts import DatasetVersion, git_commit, sha256_file, write_contract
 from maa_duel.review import ReviewStore
 from maa_duel.schema import ReviewStatus, RoundSample, Winner
@@ -72,6 +73,16 @@ def build_predictor_dataset(workspace: Path) -> list[PredictorSample]:
             "right": sum(row.winner is Winner.RIGHT for row in rows),
         },
     }
+    knowledge_path = workspace / "assets" / "combat" / "vs2_enemy_combat.json"
+    knowledge = load_combat_knowledge(knowledge_path) if knowledge_path.is_file() else None
+    if knowledge is not None:
+        metadata.update(
+            {
+                "feature_version": knowledge.feature_version,
+                "knowledge_manifest": knowledge_path.relative_to(workspace).as_posix(),
+                "knowledge_sha256": sha256_file(knowledge_path),
+            }
+        )
     if metadata["accepted_samples"] != metadata["written_samples"]:
         raise RuntimeError("accepted sample count differs from written training sample count")
     (manifest_dir / "predictor.meta.json").write_text(
@@ -86,6 +97,9 @@ def build_predictor_dataset(workspace: Path) -> list[PredictorSample]:
         source_manifest_sha256=sha256_file(source_manifest),
         task_counts={"predictor": len(rows)},
         split_policy="all-training",
+        feature_version=metadata.get("feature_version"),
+        knowledge_manifest=metadata.get("knowledge_manifest"),
+        knowledge_sha256=metadata.get("knowledge_sha256"),
         git_commit=git_commit(),
     )
     write_contract(workspace / "datasets" / dataset_version / "dataset.json", contract)

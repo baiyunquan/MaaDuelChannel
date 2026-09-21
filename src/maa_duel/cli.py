@@ -51,6 +51,28 @@ def assets_fetch_prts(
         raise typer.Exit(code=1)
 
 
+@assets_app.command("fetch-prts-combat")
+def assets_fetch_prts_combat(
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False, help="External workspace directory.")],
+    request_interval: Annotated[
+        float, typer.Option(min=0.0, max=10.0, help="Delay between PRTS requests in seconds.")
+    ] = 0.25,
+) -> None:
+    from maa_duel.prts_combat import sync_prts_combat_knowledge
+
+    result = sync_prts_combat_knowledge(workspace, request_interval=request_interval)
+    typer.echo(
+        f"Fetched {result.profile_count} VS-2 combat profiles; "
+        f"mapped {result.mapped_profile_count} to model enemy IDs; sha256={result.knowledge_sha256}"
+    )
+    typer.echo(f"Combat knowledge: {result.path}")
+    if result.missing_page_names:
+        typer.echo(
+            f"Stage stats retained; missing enemy pages: {', '.join(result.missing_page_names)}",
+            err=True,
+        )
+
+
 @app.command()
 def scan(
     input_dir: Annotated[Path, typer.Option(exists=True, file_okay=False)],

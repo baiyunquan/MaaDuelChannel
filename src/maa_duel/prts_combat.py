@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 import urllib.parse
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
-from maa_duel.assets import AssetManifest
+from maa_duel.assets import AssetManifest, load_asset_manifest
 from maa_duel.combat import (
     AttackMode,
     CombatKnowledge,
@@ -18,7 +20,9 @@ from maa_duel.combat import (
     SkillKnowledge,
     StageEnemyRow,
     StageRules,
+    save_combat_knowledge,
 )
+from maa_duel.prts_assets import PrtsClient, _normalize_title, _revision_text
 
 PRTS_STAGE_TITLE = "VS-2 争锋对决！"
 PRTS_STAGE_URL = "https://prts.wiki/w/VS-2_%E4%BA%89%E9%94%8B%E5%AF%B9%E5%86%B3%EF%BC%81"
@@ -51,6 +55,15 @@ _MECHANIC_KEYWORDS: tuple[tuple[MechanicKind, tuple[str, ...]], ...] = (
     (MechanicKind.EXECUTE, ("直接击倒", "处决")),
     (MechanicKind.DISPLACEMENT, ("推动", "拖拽", "位移")),
 )
+
+
+@dataclass(frozen=True)
+class PrtsCombatSyncResult:
+    path: Path
+    profile_count: int
+    mapped_profile_count: int
+    missing_page_names: tuple[str, ...]
+    knowledge_sha256: str
 
 
 def _field(text: str, name: str) -> str:
@@ -219,4 +232,62 @@ def compile_combat_knowledge(
         fetched_at=fetched_at or datetime.now(UTC),
         rules=stage.rules,
         enemies=profiles,
+    )
+
+
+def _revision_id(page: dict[str, object]) -> int | None:
+    revisions = page.get("revisions")
+    if not isinstance(revisions, list) or not revisions:
+        return None
+    revision = revisions[0]
+    return revision.get("revid") if isinstance(revision, dict) else None
+
+
+def sync_prts_combat_knowledge(
+    workspace: Path,
+    *,
+    request_interval: float = 0.25,
+    client: PrtsClient | None = None,
+) -> PrtsCombatSyncResult:
+    manifest_path = workspace / "assets" / "catalog.json"
+    manifest = load_asset_manifest(manifest_path)
+    api = client or PrtsClient(request_interval=request_interval)
+    stage_pages = api.query_pages([PRTS_STAGE_TITLE])
+    stage_page = stage_pages.get(_normalize_title(PRTS_STAGE_TITLE), {})
+    stage_wikitext = _revision_text(stage_page)
+    stage_revision = _revision_id(stage_page)
+    if not stage_wikitext or stage_revision is None:
+        raise ValueError(f"PRTS stage page is missing revision content: {PRTS_STAGE_TITLE}")
+    stage = parse_stage_wikitext(stage_wikitext)
+
+    page_names = list(dict.fromkeys(row.portrait_name for row in stage.enemies if row.portrait_name))
+    pages = api.query_pages(page_names)
+    details: dict[str, EnemyPageDetails] = {}
+    missing: list[str] = []
+    for page_name in page_names:
+        page = pages.get(_normalize_title(page_name), {})
+        wikitext = _revision_text(page)
+        if not wikitext:
+            missing.append(page_name)
+            continue
+        details[page_name] = parse_enemy_wikitext(
+            str(page.get("title") or page_name),
+            wikitext,
+            revision_id=_revision_id(page),
+        )
+
+    knowledge = compile_combat_knowledge(
+        stage,
+        manifest,
+        details,
+        source_revision=stage_revision,
+    )
+    output_path = workspace / "assets" / "combat" / "vs2_enemy_combat.json"
+    digest = save_combat_knowledge(output_path, knowledge)
+    return PrtsCombatSyncResult(
+        path=output_path,
+        profile_count=len(knowledge.enemies),
+        mapped_profile_count=sum(profile.enemy_id is not None for profile in knowledge.enemies),
+        missing_page_names=tuple(missing),
+        knowledge_sha256=digest,
     )

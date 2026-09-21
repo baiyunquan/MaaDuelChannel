@@ -26,6 +26,7 @@ def test_training_commands_expose_reproducibility_options():
     predictor = runner.invoke(app, ["train-predictor", "--help"])
     vision = runner.invoke(app, ["train-vision", "--help"])
     synthetic = runner.invoke(app, ["synth", "--help"])
+    assets = runner.invoke(app, ["assets", "--help"])
 
     assert predictor.exit_code == 0
     assert "--epochs" in predictor.stdout
@@ -34,3 +35,5 @@ def test_training_commands_expose_reproducibility_options():
     assert "--device" in vision.stdout
     assert synthetic.exit_code == 0
     assert "--detection-images" in synthetic.stdout
+    assert assets.exit_code == 0
+    assert "fetch-prts-combat" in assets.stdout
