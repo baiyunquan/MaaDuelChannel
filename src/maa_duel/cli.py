@@ -90,6 +90,7 @@ def synth(
     portrait_variants: Annotated[int, typer.Option(min=1)] = 40,
     detection_images: Annotated[int, typer.Option(min=0)] = 1000,
     seed: Annotated[int, typer.Option()] = 20260920,
+    empty_slot_image: Annotated[Path | None, typer.Option(help="Optional path to empty slot reference image.")] = None,
 ) -> None:
     from maa_duel.synthetic import generate_synthetic_dataset
 
@@ -98,8 +99,12 @@ def synth(
         portrait_variants=portrait_variants,
         detection_images=detection_images,
         seed=seed,
+        empty_slot_image=empty_slot_image,
     )
-    typer.echo(f"Generated {result.portrait_images} portrait and {result.detection_images} battlefield images")
+    empty_msg = f" (including {result.empty_slot_images} empty slot samples)" if result.empty_slot_images else ""
+    typer.echo(
+        f"Generated {result.portrait_images} portrait{empty_msg} and {result.detection_images} battlefield images"
+    )
 
 
 @app.command("train-vision")
@@ -155,23 +160,45 @@ def extract(
     device: Annotated[str, typer.Option(help="Ultralytics inference device, for example 0 or cpu.")] = "0",
     half: Annotated[bool, typer.Option("--half/--no-half", help="Use FP16 inference on supported GPUs.")] = True,
     batch_size: Annotated[int, typer.Option(min=1, help="YOLO inference batch size.")] = 32,
+    scan_fps: Annotated[
+        float | None, typer.Option(min=1.0, max=30.0, help="Sampling frame rate for phase analysis.")
+    ] = None,
+    max_videos: Annotated[int | None, typer.Option(min=1, help="Limit number of videos to extract.")] = None,
 ) -> None:
     from maa_duel.extraction import extract_rounds
 
-    samples = extract_rounds(input_dir, workspace, device=device, half=half, batch_size=batch_size)
+    samples = extract_rounds(
+        input_dir,
+        workspace,
+        device=device,
+        half=half,
+        batch_size=batch_size,
+        scan_fps=scan_fps,
+        max_videos=max_videos,
+    )
     typer.echo(f"Extracted {len(samples)} round samples")
 
 
 @app.command()
 def review(
     workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    port: Annotated[int, typer.Option(help="Local review web server port.")] = 7860,
+    platform: Annotated[
+        bool,
+        typer.Option("--platform", help="Export Ultralytics Platform packages instead of local offline review."),
+    ] = False,
 ) -> None:
-    from maa_duel.review import launch_review
+    if platform:
+        from maa_duel.review import launch_review
 
-    exported = launch_review(workspace)
-    typer.echo(f"Platform export: {exported.directory}")
-    for task, archive in exported.archives.items():
-        typer.echo(f"  {task.value}: {archive} ({exported.item_counts[task]} items)")
+        exported = launch_review(workspace)
+        typer.echo(f"Platform export: {exported.directory}")
+        for task, archive in exported.archives.items():
+            typer.echo(f"  {task.value}: {archive} ({exported.item_counts[task]} items)")
+    else:
+        from maa_duel.review import launch_local_review
+
+        launch_local_review(workspace, port=port)
 
 
 @annotate_app.command("export")

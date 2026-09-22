@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import yaml
 
-from maa_duel.assets import EnemyAsset, load_asset_manifest
+from maa_duel.assets import EnemyAsset, find_empty_slot_image, import_animation_assets, load_asset_manifest
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,7 @@ class SyntheticResult:
     detection_images: int
     skipped_portraits: tuple[int, ...]
     skipped_animations: tuple[int, ...]
+    empty_slot_images: int = 0
 
 
 def _read_image(path: Path) -> np.ndarray:
@@ -46,15 +47,27 @@ def _sprite_frames(path: Path, maximum_frames: int = 24) -> list[np.ndarray]:
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
         raise ValueError(f"cannot open animation asset: {path}")
-    total = max(1, int(capture.get(cv2.CAP_PROP_FRAME_COUNT)))
-    indices = np.linspace(0, total - 1, num=min(maximum_frames, total), dtype=int)
+    raw_total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     frames: list[np.ndarray] = []
     try:
-        for index in indices:
-            capture.set(cv2.CAP_PROP_POS_FRAMES, int(index))
-            ok, frame = capture.read()
-            if ok:
-                frames.append(_rgba(frame))
+        if 1 < raw_total < 100_000:
+            indices = np.linspace(0, raw_total - 1, num=min(maximum_frames, raw_total), dtype=int)
+            for index in indices:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, int(index))
+                ok, frame = capture.read()
+                if ok:
+                    frames.append(_rgba(frame))
+        if not frames:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            all_frames: list[np.ndarray] = []
+            while True:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                all_frames.append(frame)
+            if all_frames:
+                step = max(1, len(all_frames) // maximum_frames)
+                frames = [_rgba(all_frames[i]) for i in range(0, len(all_frames), step)[:maximum_frames]]
     finally:
         capture.release()
     if not frames:
@@ -85,6 +98,22 @@ def _augment_portrait(image: np.ndarray, rng: np.random.Generator) -> np.ndarray
     return canvas
 
 
+def _augment_empty_slot(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    rgba = _rgba(image)
+    scale = float(rng.uniform(0.80, 1.05))
+    size = min(108, max(24, round(96 * scale)))
+    resized = cv2.resize(rgba, (size, size), interpolation=cv2.INTER_AREA)
+    canvas = np.full((112, 112, 3), int(rng.integers(15, 60)), dtype=np.uint8)
+    x = max(0, (112 - size) // 2)
+    y = max(0, (112 - size) // 2)
+    _composite(canvas, resized, x, y)
+    gain = float(rng.uniform(0.85, 1.15))
+    canvas = np.clip(canvas.astype(np.float32) * gain, 0, 255).astype(np.uint8)
+    if rng.random() < 0.35:
+        canvas = cv2.GaussianBlur(canvas, (3, 3), 0)
+    return canvas
+
+
 def _available(manifest, kind: str) -> list[tuple[EnemyAsset, Path]]:
     values = []
     for enemy in manifest.enemies:
@@ -102,18 +131,44 @@ def _generate_synthetic_dataset(
     portrait_variants: int = 40,
     detection_images: int = 1000,
     seed: int = 20260920,
+    empty_slot_image: Path | None = None,
 ) -> SyntheticResult:
-    manifest = load_asset_manifest(workspace / "assets" / "catalog.json")
+    catalog_path = workspace / "assets" / "catalog.json"
+    manifest = load_asset_manifest(catalog_path)
+    available_animations = _available(manifest, "animation")
+    if not available_animations and (workspace / "CannotMax").is_dir():
+        import_animation_assets(workspace)
+        manifest = load_asset_manifest(catalog_path)
+        available_animations = _available(manifest, "animation")
     rng = np.random.default_rng(seed)
     available_portraits = _available(manifest, "portrait")
-    available_animations = _available(manifest, "animation")
     class_ids = sorted(enemy.enemy_id for enemy, _ in available_animations)
     class_index = {enemy_id: index for index, enemy_id in enumerate(class_ids)}
 
+    empty_slot_path = find_empty_slot_image(workspace, empty_slot_image)
+    empty_slot_count = 0
+    if empty_slot_path is not None:
+        empty_img = _read_image(empty_slot_path)
+        train_empty_dir = output / "roster" / "train" / "0000"
+        val_empty_dir = output / "roster" / "val" / "0000"
+        train_empty_dir.mkdir(parents=True, exist_ok=True)
+        val_empty_dir.mkdir(parents=True, exist_ok=True)
+        for variant in range(portrait_variants):
+            augmented = _augment_empty_slot(empty_img, rng)
+            filename = f"0000-{variant:04d}.jpg"
+            destination = train_empty_dir / filename
+            cv2.imencode(".jpg", augmented, [cv2.IMWRITE_JPEG_QUALITY, int(rng.integers(65, 96))])[1].tofile(
+                destination
+            )
+            val_destination = val_empty_dir / filename
+            try:
+                os.link(destination, val_destination)
+            except OSError:
+                shutil.copy2(destination, val_destination)
+            empty_slot_count += 1
+
     portrait_count = 0
-    roster_map: dict[str, int] = {}
-    for class_position, (enemy, relative_path) in enumerate(available_portraits):
-        roster_map[str(class_position)] = enemy.enemy_id
+    for enemy, relative_path in available_portraits:
         image = _read_image(workspace / relative_path)
         train_class_dir = output / "roster" / "train" / f"{enemy.enemy_id:04d}"
         val_class_dir = output / "roster" / "val" / f"{enemy.enemy_id:04d}"
@@ -133,6 +188,8 @@ def _generate_synthetic_dataset(
                 shutil.copy2(destination, val_destination)
             portrait_count += 1
     (output / "roster").mkdir(parents=True, exist_ok=True)
+    roster_classes = sorted(p.name for p in (output / "roster" / "train").iterdir() if p.is_dir())
+    roster_map: dict[str, int] = {str(index): int(folder_name) for index, folder_name in enumerate(roster_classes)}
     (output / "roster" / "class-map.json").write_text(
         json.dumps(roster_map, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -206,10 +263,11 @@ def _generate_synthetic_dataset(
     animation_ids = {enemy.enemy_id for enemy, _ in available_animations}
     all_ids = {enemy.enemy_id for enemy in manifest.enemies}
     return SyntheticResult(
-        portrait_images=portrait_count,
+        portrait_images=portrait_count + empty_slot_count,
         detection_images=produced_detection_images,
         skipped_portraits=tuple(sorted(all_ids - portrait_ids)),
         skipped_animations=tuple(sorted(all_ids - animation_ids)),
+        empty_slot_images=empty_slot_count,
     )
 
 
@@ -237,6 +295,7 @@ def generate_synthetic_dataset(
     portrait_variants: int = 40,
     detection_images: int = 1000,
     seed: int = 20260920,
+    empty_slot_image: Path | None = None,
 ) -> SyntheticResult:
     workspace.mkdir(parents=True, exist_ok=True)
     final_output = workspace / "synthetic"
@@ -249,6 +308,7 @@ def generate_synthetic_dataset(
             portrait_variants=portrait_variants,
             detection_images=detection_images,
             seed=seed,
+            empty_slot_image=empty_slot_image,
         )
         _replace_synthetic_directory(staged, final_output)
     return result

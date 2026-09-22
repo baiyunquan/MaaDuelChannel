@@ -27,21 +27,24 @@ class OcrPhaseAnalyzer:
     def analyze(self, frame: np.ndarray, timestamp: float) -> FrameSignals:
         height, width = frame.shape[:2]
         center = frame[int(height * 0.32) : int(height * 0.66), int(width * 0.32) : int(width * 0.68)]
-        top = frame[0 : int(height * 0.14), int(width * 0.38) : int(width * 0.62)]
         center_text = [
             item.text
             for item in self.ocr.recognize(center, detect=False)
             if item.confidence >= self.minimum_ocr_confidence
         ]
-        top_text = [
-            item.text
-            for item in self.ocr.recognize(top, detect=False)
-            if item.confidence >= self.minimum_ocr_confidence
-        ]
-
         countdown = next((value for text in center_text if (value := parse_countdown(text)) is not None), None)
         round_number = next((value for text in center_text if (value := parse_round_number(text)) is not None), None)
-        has_player_anchor = re.search(r"\d\s*/\s*\d", "".join(top_text)) is not None
+
+        has_player_anchor = False
+        if countdown is None and round_number is None:
+            top = frame[0 : int(height * 0.14), int(width * 0.38) : int(width * 0.62)]
+            top_text = [
+                item.text
+                for item in self.ocr.recognize(top, detect=False)
+                if item.confidence >= self.minimum_ocr_confidence
+            ]
+            has_player_anchor = re.search(r"\d\s*/\s*\d", "".join(top_text)) is not None
+
         direct_game_signal = countdown is not None or round_number is not None or has_player_anchor
         if direct_game_signal:
             self._last_direct_game_signal = timestamp

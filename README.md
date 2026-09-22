@@ -133,7 +133,7 @@ uv run duel scan --input-dir D:\MAA-DuelChannel\training-data --workspace D:\MAA
 uv run duel synth --workspace D:\MAA-DuelChannel\workspace --portrait-variants 40 --detection-images 1000 --seed 20260920
 ~~~
 
-头像和战场数据都只生成一套训练样本。Ultralytics classification 初始化时强制要求 `val` 目录，因此头像数据用硬链接（不支持时复制）建立与 train 完全相同的兼容视图；战场数据的 val 也指向 train。它们都不是留出集，报告中的验证结果仍然只能视作训练集拟合结果。每次生成先写入临时目录，完成后整体替换 synthetic，旧类别和旧图片不会混入新数据。
+头像和战场数据都只生成一套训练样本。Ultralytics classification 初始化时强制要求 `val` 目录，因此头像数据用硬链接（不支持时复制）建立与 train 完全相同的兼容视图；战场数据的 val 也指向 train。它们都不是留出集，报告中的验证结果仍然只能视作训练集拟合结果。若存在空卡槽底图（`assets/ui/empty_slot.png` 或 `--empty-slot-image`），合成器会为类别 `0000`（`enemy_id = 0`）生成空槽变体样本，使分类模型具备直接识别空卡槽的能力。每次生成先写入临时目录，完成后整体替换 synthetic，旧类别和旧图片不会混入新数据。
 
 ### 3. 训练两个视觉模型
 

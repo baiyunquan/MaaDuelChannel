@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -244,6 +245,7 @@ def train_vision_model(
         deterministic=deterministic,
         seed=seed,
         patience=patience,
+        close_mosaic=0 if sys.platform == "win32" or task in {"roster", "ocr"} else 10,
     )
     weight_root = task_project / run_name / "weights"
     checkpoint = weight_root / "best.pt"

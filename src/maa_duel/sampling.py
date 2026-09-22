@@ -75,7 +75,7 @@ def _synthetic_base_records(workspace: Path) -> list[AnnotationRecord]:
             relative = image.relative_to(workspace).as_posix()
             digest = sha256_file(image)
             annotation_id = stable_annotation_id("synthetic-roster", relative)
-            class_name = f"enemy_{int(image.parent.name):04d}"
+            class_name = "empty" if int(image.parent.name) == 0 else f"enemy_{int(image.parent.name):04d}"
             records.append(
                 AnnotationRecord(
                     annotation_id=annotation_id,

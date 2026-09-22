@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import dataclass
 from typing import Protocol
@@ -64,26 +65,83 @@ def parse_countdown(text: str) -> int | None:
     minutes, seconds = (int(value) for value in match.groups())
     if seconds >= 60:
         return None
-    return minutes * 60 + seconds
+    total = minutes * 60 + seconds
+    return total if total <= 60 else None
+
+
+_ROUND_DIGIT_REPLACEMENTS = str.maketrans(
+    {
+        "Z": "2",
+        "z": "2",
+        "S": "3",
+        "s": "3",
+        "I": "1",
+        "l": "1",
+        "|": "1",
+        "O": "0",
+        "o": "0",
+        "D": "0",
+        "Q": "0",
+    }
+)
 
 
 def parse_round_number(text: str) -> int | None:
-    match = re.search(r"ROUND\s*0*(\d+)", text, flags=re.IGNORECASE)
-    return int(match.group(1)) if match else None
+    match = re.search(r"ROUND\s*([0-9A-Za-z|]+)", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    rest = match.group(1).translate(_ROUND_DIGIT_REPLACEMENTS)
+    num_match = re.search(r"0*(\d+)", rest)
+    return int(num_match.group(1)) if num_match else None
 
 
 class RapidOcrEngine:
-    """Lazy RapidOCR adapter so non-OCR commands do not require the optional dependency."""
+    """Lazy RapidOCR adapter with optional CUDA acceleration."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, use_cuda: bool = True) -> None:
         try:
             from rapidocr import RapidOCR
         except ImportError as exc:
             raise RuntimeError("RapidOCR is not installed; install the ocr extra") from exc
-        self._engine = RapidOCR()
+
+        if use_cuda:
+            import ctypes
+            import os
+            import sys
+            from pathlib import Path
+
+            site_packages = Path(sys.prefix) / "Lib" / "site-packages"
+            for rel in ("nvidia/cudnn/bin", "nvidia/cublas/bin", "nvidia/cuda_nvrtc/bin", "torch/lib"):
+                dll_path = site_packages / Path(rel)
+                if dll_path.is_dir():
+                    with contextlib.suppress(AttributeError, OSError):
+                        os.add_dll_directory(str(dll_path))
+                    os.environ["PATH"] = str(dll_path) + os.pathsep + os.environ.get("PATH", "")
+            for rel_dll in (
+                "nvidia/cublas/bin/cublasLt64_12.dll",
+                "nvidia/cublas/bin/cublas64_12.dll",
+                "nvidia/cudnn/bin/cudnn64_9.dll",
+            ):
+                target = site_packages / rel_dll
+                if target.is_file():
+                    with contextlib.suppress(OSError):
+                        ctypes.CDLL(str(target))
+
+        params = None
+        if use_cuda:
+            params = {
+                "EngineConfig.onnxruntime.use_cuda": True,
+                "Det.engine_cfg.use_cuda": True,
+                "Cls.engine_cfg.use_cuda": False,
+                "Rec.engine_cfg.use_cuda": True,
+            }
+        try:
+            self._engine = RapidOCR(params=params)
+        except Exception:
+            self._engine = RapidOCR()
 
     def recognize(self, image: np.ndarray, *, detect: bool = True) -> list[OcrText]:
-        result = self._engine(image, use_det=detect, use_cls=detect, use_rec=True)
+        result = self._engine(image, use_det=detect, use_cls=False, use_rec=True)
         texts = [] if result.txts is None else list(result.txts)
         scores = [] if result.scores is None else list(result.scores)
         boxes = ([] if result.boxes is None else list(result.boxes)) if detect else [None] * len(texts)

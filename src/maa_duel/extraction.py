@@ -238,7 +238,8 @@ class VideoExtractor:
             raise ValueError(f"video reports invalid FPS: {video_path}")
         step = max(1, round(fps / self.scan_fps))
         start_frame = max(0, round(start * fps))
-        capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        if start_frame > 0:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         frame_index = start_frame
         try:
             while True:
@@ -249,9 +250,10 @@ class VideoExtractor:
                 if end is not None and timestamp > end:
                     break
                 yield timestamp, frame
-                next_frame = frame_index + step
-                capture.set(cv2.CAP_PROP_POS_FRAMES, next_frame)
-                frame_index = next_frame
+                for _ in range(step - 1):
+                    if not capture.grab():
+                        break
+                frame_index += step
         finally:
             capture.release()
 
@@ -285,8 +287,12 @@ def extract_rounds(
     device: str = "0",
     half: bool = True,
     batch_size: int = 32,
+    scan_fps: float | None = None,
+    max_videos: int | None = None,
 ) -> list[RoundSample]:
     """Run extraction for every Green Vine video and replace the automatic manifest."""
+
+    import typer
 
     from maa_duel.config import PipelineConfig
     from maa_duel.store import read_jsonl, write_jsonl
@@ -325,7 +331,7 @@ def extract_rounds(
         if video_manifest.exists()
         else scan_inventory(input_dir, video_manifest)
     )
-    ocr = RapidOcrEngine()
+    ocr = RapidOcrEngine(use_cuda=device != "cpu")
     count_classifier = (
         YoloCountClassifier(
             ocr_model,
@@ -337,6 +343,7 @@ def extract_rounds(
         if ocr_model.is_file() and ocr_class_map.is_file()
         else None
     )
+    fps = scan_fps if scan_fps is not None else config.sample_fps
     extractor = VideoExtractor(
         phase_analyzer=OcrPhaseAnalyzer(ocr),
         roster_recognizer=RosterFrameRecognizer(
@@ -358,18 +365,30 @@ def extract_rounds(
             batch_size=batch_size,
         ),
         health_detector=HealthBarDetector(),
-        scan_fps=config.sample_fps,
+        scan_fps=fps,
         stable_winner_frames=config.stable_winner_frames,
     )
     samples: list[RoundSample] = []
     errors: list[dict[str, str]] = []
-    for record in records:
-        if record.arena is not Arena.GREEN_VINE:
-            continue
+    gv_records = [record for record in records if record.arena is Arena.GREEN_VINE]
+    gv_records.sort(key=lambda item: (item.duration > 300, item.duration, item.relative_path.casefold()))
+    if max_videos is not None:
+        gv_records = gv_records[:max_videos]
+
+    typer.echo(f"Extracting {len(gv_records)} Green Vine videos at {fps:.1f} fps...")
+    for index, record in enumerate(gv_records, start=1):
         path = input_dir / Path(record.relative_path)
         source = SourceRef(video_relpath=record.relative_path, video_sha256=record.sha256)
+        typer.echo(f"[{index}/{len(gv_records)}] {record.relative_path} ({record.duration:.1f}s)...")
         try:
-            samples.extend(extractor.extract_video(path, source, workspace))
+            extracted = extractor.extract_video(path, source, workspace)
+            samples.extend(extracted)
+            typer.echo(f"  -> Extracted {len(extracted)} rounds (issues: {len(extractor.issues)})")
+            if extracted:
+                samples.sort(
+                    key=lambda item: (item.source.video_relpath.casefold(), item.round_index, item.timestamps.layout)
+                )
+                write_jsonl(config.manifest_dir / "rounds.auto.jsonl", samples)
             errors.extend(
                 {
                     "video": record.relative_path,
@@ -380,6 +399,7 @@ def extract_rounds(
                 for issue in extractor.issues
             )
         except (OSError, ValueError, RuntimeError) as exc:
+            typer.echo(f"  -> Video error: {exc}", err=True)
             errors.append({"video": record.relative_path, "kind": "video_error", "error": str(exc)})
 
     samples.sort(key=lambda item: (item.source.video_relpath.casefold(), item.round_index, item.timestamps.layout))

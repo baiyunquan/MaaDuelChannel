@@ -50,6 +50,14 @@ class RoundSegmenter:
             last_game_timestamp = item.timestamp
 
             if item.countdown_seconds is not None:
+                if (
+                    active is not None
+                    and active.zero_seen
+                    and active.battle_start is None
+                    and item.countdown_seconds <= 1
+                ):
+                    continue
+
                 countdown_restarted = (
                     active is not None
                     and item.countdown_seconds > 0
@@ -86,7 +94,7 @@ class RoundSegmenter:
             if (
                 not active.zero_seen
                 and active.last_countdown_seconds is not None
-                and active.last_countdown_seconds <= 1
+                and active.last_countdown_seconds <= 2
             ):
                 active.zero_seen = True
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import shutil
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -176,3 +177,100 @@ def sync_assets(catalog: Path, workspace: Path, *, background_dir: Path | None =
 
 def load_asset_manifest(path: Path) -> AssetManifest:
     return AssetManifest.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def find_empty_slot_image(workspace: Path, custom_path: Path | None = None) -> Path | None:
+    """Find empty slot reference image, copying from legacy/external tools if needed."""
+    if custom_path is not None:
+        custom_resolved = custom_path.resolve()
+        if custom_resolved.is_file():
+            return custom_resolved
+        raise FileNotFoundError(f"specified empty slot image does not exist: {custom_path}")
+
+    candidates = [
+        workspace / "assets" / "ui" / "empty_slot.png",
+        workspace / "assets" / "ui" / "empty.png",
+        workspace / "assets" / "empty.png",
+        workspace / "assets" / "portraits" / "0000" / "thumbnail.png",
+        workspace / "CannotMax" / "images" / "empty.png",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            standard_target = workspace / "assets" / "ui" / "empty_slot.png"
+            if candidate == workspace / "CannotMax" / "images" / "empty.png" and not standard_target.is_file():
+                standard_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(candidate, standard_target)
+                return standard_target
+            return candidate
+    return None
+
+
+def import_animation_assets(
+    workspace: Path,
+    animation_dir: Path | None = None,
+) -> int:
+    """Import battlefield animation webm assets into workspace and update catalog manifest."""
+    if animation_dir is None:
+        default_candidate = workspace / "CannotMax" / "tools" / "battlefield_composite" / "monster_images"
+        if default_candidate.is_dir():
+            animation_dir = default_candidate
+        else:
+            return 0
+    else:
+        animation_dir = animation_dir.resolve()
+        if not animation_dir.is_dir():
+            raise FileNotFoundError(f"animation directory does not exist: {animation_dir}")
+
+    manifest_path = workspace / "assets" / "catalog.json"
+    if not manifest_path.is_file():
+        return 0
+
+    manifest = load_asset_manifest(manifest_path)
+    name_to_enemy: dict[str, EnemyAsset] = {}
+    for enemy in manifest.enemies:
+        name_to_enemy[enemy.name] = enemy
+        if enemy.original_name:
+            name_to_enemy[enemy.original_name] = enemy
+
+    imported_count = 0
+    for file in sorted(animation_dir.glob("*.webm")):
+        base_name = file.name.split("-默认-战斗-")[0].split("-默认-")[0].split(".")[0]
+        enemy = name_to_enemy.get(base_name)
+        if enemy is None:
+            continue
+        rel_dir = Path("assets") / "animations" / f"{enemy.enemy_id:04d}"
+        destination = workspace / rel_dir / f"animation{file.suffix.casefold()}"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        data = file.read_bytes()
+        digest = _sha256_bytes(data)
+        if not destination.exists() or _sha256_bytes(destination.read_bytes()) != digest:
+            destination.write_bytes(data)
+        enemy.animation = AssetFile(
+            source=file.as_uri(),
+            relative_path=destination.relative_to(workspace).as_posix(),
+            sha256=digest,
+        )
+        if "animation" in enemy.missing:
+            enemy.missing.remove("animation")
+        imported_count += 1
+
+    bg_source = animation_dir / "IM-1.png"
+    if bg_source.is_file():
+        bg_dest = workspace / "assets" / "backgrounds" / "IM-1.png"
+        bg_dest.parent.mkdir(parents=True, exist_ok=True)
+        bg_data = bg_source.read_bytes()
+        bg_digest = _sha256_bytes(bg_data)
+        if not bg_dest.exists() or _sha256_bytes(bg_dest.read_bytes()) != bg_digest:
+            bg_dest.write_bytes(bg_data)
+        rel_bg = bg_dest.relative_to(workspace).as_posix()
+        if not any(bg.relative_path == rel_bg for bg in manifest.backgrounds):
+            manifest.backgrounds.append(
+                AssetFile(
+                    source=bg_source.as_uri(),
+                    relative_path=rel_bg,
+                    sha256=bg_digest,
+                )
+            )
+
+    manifest_path.write_text(manifest.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
+    return imported_count
