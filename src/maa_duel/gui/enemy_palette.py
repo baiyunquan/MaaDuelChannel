@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -23,7 +24,7 @@ class EnemyPalette(QWidget):
 
     enemy_selected = pyqtSignal(int)  # Emits enemy_id
 
-    def __init__(self, workspace: Path, icon_size: int = 32, parent: QWidget | None = None) -> None:
+    def __init__(self, workspace: Path, icon_size: int = 56, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.workspace = workspace
         self.icon_size = icon_size
@@ -41,15 +42,27 @@ class EnemyPalette(QWidget):
         box = QGroupBox("敌人图谱 (点击赋予选中卡槽)")
         box_layout = QVBoxLayout(box)
         box_layout.setContentsMargins(6, 6, 6, 6)
-        box_layout.setSpacing(4)
+        box_layout.setSpacing(6)
 
-        # Search Bar
+        # Search Bar + Zoom Slider
         search_layout = QHBoxLayout()
+        search_layout.setSpacing(6)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText(" 搜索名称 / 原名 / ID...")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.textChanged.connect(self._filter_enemies)
-        search_layout.addWidget(self.search_edit)
+        search_layout.addWidget(self.search_edit, stretch=1)
+
+        self.size_label = QLabel(f"{self.icon_size}px")
+        self.size_label.setStyleSheet("color: #999999; font-size: 11px;")
+        self.size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.size_slider.setRange(36, 80)
+        self.size_slider.setValue(self.icon_size)
+        self.size_slider.setFixedWidth(80)
+        self.size_slider.setToolTip("调节图谱头像大小 (36px - 80px，支持 Ctrl+滚轮)")
+        self.size_slider.valueChanged.connect(self.set_icon_size)
+        search_layout.addWidget(self.size_slider)
+        search_layout.addWidget(self.size_label)
         box_layout.addLayout(search_layout)
 
         # List Widget for Icons
@@ -57,28 +70,30 @@ class EnemyPalette(QWidget):
         self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
         self.list_widget.setIconSize(QSize(self.icon_size, self.icon_size))
         self.list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.list_widget.setGridSize(QSize(self.icon_size + 8, self.icon_size + 8))
-        self.list_widget.setSpacing(2)
+        self.list_widget.setGridSize(QSize(self.icon_size + 10, self.icon_size + 10))
+        self.list_widget.setSpacing(4)
         self.list_widget.setUniformItemSizes(True)
         self.list_widget.setStyleSheet(
             """
             QListWidget {
-                background-color: #1e1e1e;
+                background-color: #1a1a1a;
                 border: 1px solid #3c3c3c;
-                border-radius: 4px;
+                border-radius: 6px;
+                padding: 4px;
             }
             QListWidget::item {
-                border: 1px solid transparent;
-                border-radius: 3px;
-                padding: 1px;
+                border: 1px solid #2e2e2e;
+                border-radius: 4px;
+                padding: 2px;
+                background-color: #222222;
             }
             QListWidget::item:hover {
-                background-color: #333333;
+                background-color: #353535;
                 border: 1px solid #00aaff;
             }
             QListWidget::item:selected {
-                background-color: #005588;
-                border: 1px solid #00d4ff;
+                background-color: #004d7a;
+                border: 2px solid #00d4ff;
             }
             """
         )
@@ -89,12 +104,31 @@ class EnemyPalette(QWidget):
 
         # Hover Info Label
         self.info_label = QLabel("鼠标悬停查看详情，点击选择")
-        self.info_label.setStyleSheet("color: #aaaaaa; font-size: 11px; padding: 2px;")
+        self.info_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold; padding: 4px;")
         self.info_label.setWordWrap(True)
         self.info_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         box_layout.addWidget(self.info_label)
 
         layout.addWidget(box)
+
+    def set_icon_size(self, size: int) -> None:
+        self.icon_size = size
+        self.size_label.setText(f"{size}px")
+        if self.size_slider.value() != size:
+            self.size_slider.blockSignals(True)
+            self.size_slider.setValue(size)
+            self.size_slider.blockSignals(False)
+        self.list_widget.setIconSize(QSize(size, size))
+        self.list_widget.setGridSize(QSize(size + 10, size + 10))
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            step = 4 if delta > 0 else -4
+            self.set_icon_size(max(36, min(80, self.icon_size + step)))
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def load_catalog(self) -> None:
         self.list_widget.clear()

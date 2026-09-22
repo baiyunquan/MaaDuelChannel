@@ -302,7 +302,7 @@ class ReviewerMainWindow(QMainWindow):
         right_layout.addWidget(self.roster_panel)
 
         # Lower: Enemy Palette (Compact thumbnails)
-        self.enemy_palette = EnemyPalette(self.workspace, icon_size=32, parent=self)
+        self.enemy_palette = EnemyPalette(self.workspace, icon_size=44, parent=self)
         self.enemy_palette.enemy_selected.connect(self._on_enemy_palette_selected)
         right_layout.addWidget(self.enemy_palette)
 

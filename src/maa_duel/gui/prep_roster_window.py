@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QStatusBar,
     QVBoxLayout,
     QWidget,
@@ -353,24 +354,43 @@ class PrepRosterReviewWindow(QMainWindow):
         self.scroll_area.setWidget(self.grid_container)
         left_layout.addWidget(self.scroll_area)
 
-        main_layout.addWidget(left_widget, stretch=1)
-
-        # ----------------- Right Area: Fixed Width 360px -----------------
+        # ----------------- Right Area: Responsive Enemy Palette -----------------
         right_widget = QWidget()
-        right_widget.setFixedWidth(360)
+        right_widget.setMinimumWidth(440)
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
 
         right_title = QLabel("目标敌人选择栏 (先选左侧卡片，再点此处)")
-        right_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #ffaa33;")
+        right_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #ffaa33;")
         right_layout.addWidget(right_title)
 
-        self.palette = EnemyPalette(self.workspace, icon_size=32, parent=self)
+        self.palette = EnemyPalette(self.workspace, icon_size=56, parent=self)
         self.palette.enemy_selected.connect(self._on_palette_enemy_selected)
         right_layout.addWidget(self.palette)
 
-        main_layout.addWidget(right_widget, stretch=0)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setStyleSheet(
+            """
+            QSplitter::handle {
+                background-color: #2b2b2b;
+                width: 6px;
+                margin: 0px 2px;
+                border-radius: 2px;
+            }
+            QSplitter::handle:hover {
+                background-color: #00aaff;
+            }
+            """
+        )
+        splitter.addWidget(left_widget)
+        splitter.addWidget(right_widget)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([1750, 600])
+        splitter.setChildrenCollapsible(False)
+
+        main_layout.addWidget(splitter)
         self.setCentralWidget(main_widget)
 
         # Status Bar
