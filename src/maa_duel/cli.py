@@ -164,6 +164,10 @@ def extract(
         float | None, typer.Option(min=1.0, max=30.0, help="Sampling frame rate for phase analysis.")
     ] = None,
     max_videos: Annotated[int | None, typer.Option(min=1, help="Limit number of videos to extract.")] = None,
+    force: Annotated[
+        bool, typer.Option("--force/--no-force", help="Force re-extraction of all videos from scratch.")
+    ] = False,
+    workers: Annotated[int, typer.Option(min=1, max=16, help="Number of parallel extraction workers.")] = 8,
 ) -> None:
     from maa_duel.extraction import extract_rounds
 
@@ -175,6 +179,8 @@ def extract(
         batch_size=batch_size,
         scan_fps=scan_fps,
         max_videos=max_videos,
+        force=force,
+        workers=workers,
     )
     typer.echo(f"Extracted {len(samples)} round samples")
 

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import concurrent.futures
+import contextlib
 import hashlib
+import subprocess
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,6 +73,7 @@ def assemble_round_sample(
     evidence: dict[str, str],
     acceptance_confidence: float = 0.8,
     pipeline_version: str = "0.1.0",
+    extra_reasons: tuple[str, ...] = (),
 ) -> RoundSample:
     if None in (window.prep_time, window.layout_time, window.battle_start):
         raise ValueError("round window must contain prep, layout, and battle timestamps")
@@ -78,7 +83,7 @@ def assemble_round_sample(
         right_roster=rosters.get("right", []),
         detections=detections,
     )
-    reasons = list(window.failure_reasons) + list(reconciled.reasons)
+    reasons = list(window.failure_reasons) + list(reconciled.reasons) + list(extra_reasons)
     if winner is None:
         reasons.append("winner_unresolved")
     confidences = [
@@ -90,7 +95,13 @@ def assemble_round_sample(
     if winner_confidence is not None:
         confidences.append(winner_confidence)
     high_confidence = bool(confidences) and min(confidences) >= acceptance_confidence
-    accepted = window.complete and reconciled.accepted and winner is not None and high_confidence
+    accepted = (
+        window.complete
+        and reconciled.accepted
+        and winner is not None
+        and high_confidence
+        and not extra_reasons
+    )
     if not high_confidence:
         reasons.append("low_confidence")
 
@@ -138,10 +149,12 @@ class VideoExtractor:
 
     def extract_video(self, video_path: Path, source: SourceRef, workspace: Path) -> list[RoundSample]:
         self.issues = []
-        signals = [
-            self.phase_analyzer.analyze(frame, timestamp)
-            for timestamp, frame in self._sample_video(video_path, start=0.0, end=None)
-        ]
+        sample_gen = self._sample_video(video_path, start=0.0, end=None)
+        try:
+            signals = [self.phase_analyzer.analyze(frame, timestamp) for timestamp, frame in sample_gen]
+        finally:
+            with contextlib.suppress(Exception):
+                sample_gen.close()
         windows = RoundSegmenter().segment(signals)
         samples: list[RoundSample] = []
         for window in windows:
@@ -166,6 +179,53 @@ class VideoExtractor:
                 )
         return samples
 
+    def _select_and_validate_prep_frame(
+        self,
+        video_path: Path,
+        prep_time: float,
+        layout_time: float,
+    ) -> tuple[np.ndarray, bool, list[str]]:
+        """Validate prep frame and search nearby candidates if needed to ensure
+
+        countdown is recognizable, not blurred, and not in transition or
+        battlefield.
+        """
+        offsets = [0.0, -0.2, 0.2, -0.4, 0.4, -0.6, 0.6]
+        reasons: list[str] = []
+        best_frame: np.ndarray | None = None
+
+        for offset in offsets:
+            candidate_time = prep_time + offset
+            if candidate_time < 0.0 or candidate_time >= layout_time - 0.2:
+                continue
+            try:
+                frame = self._read_frame(video_path, candidate_time)
+            except (OSError, ValueError):
+                continue
+            if frame is None or frame.size == 0 or len(frame.shape) < 2:
+                continue
+            if best_frame is None:
+                best_frame = frame
+
+            # Phase signal check
+            signals = self.phase_analyzer.analyze(frame, candidate_time)
+            if signals.round_number is not None:
+                continue
+            if signals.countdown_seconds is not None and signals.countdown_seconds > 0:
+                return frame, True, []
+
+        if best_frame is None:
+            best_frame = self._read_frame(video_path, prep_time)
+            reasons.append("invalid_prep_frame")
+            return best_frame, False, reasons
+
+        signals = self.phase_analyzer.analyze(best_frame, prep_time)
+        if signals.round_number is not None:
+            reasons.append("battle_banner_in_prep_frame")
+        else:
+            reasons.append("unverified_prep_frame")
+        return best_frame, False, reasons
+
     def _extract_window(
         self,
         video_path: Path,
@@ -177,15 +237,19 @@ class VideoExtractor:
         assert window.layout_time is not None
         assert window.battle_start is not None
 
-        prep_times = sorted(
-            {
-                max(0.0, window.prep_time - 0.2),
-                window.prep_time,
-                min(window.layout_time - 0.05, window.prep_time + 0.2),
-            }
+        prep_frame, prep_valid, prep_reasons = self._select_and_validate_prep_frame(
+            video_path, window.prep_time, window.layout_time
         )
-        prep_frames = [self._read_frame(video_path, timestamp) for timestamp in prep_times]
-        prep_frame = prep_frames[-1]
+        if prep_reasons:
+            self.issues.append(
+                ExtractionIssue(
+                    round_index=window.round_index,
+                    kind="prep_validation",
+                    detail=",".join(prep_reasons),
+                )
+            )
+
+        prep_frames = [prep_frame]
         recognize_batch = getattr(self.roster_recognizer, "recognize_batch", None)
         if callable(recognize_batch):
             observations = [item for frame_items in recognize_batch(prep_frames) for item in frame_items]
@@ -211,13 +275,18 @@ class VideoExtractor:
         tracker = WinnerTracker(stable_frames=self.stable_winner_frames)
         winner: Winner | None = None
         end_frame = self._read_frame(video_path, window.battle_end)
-        for _, frame in self._sample_video(video_path, start=window.battle_start, end=window.battle_end):
-            counts = self.health_detector.count(frame)
-            resolved = tracker.update(orange=counts.orange, blue=counts.blue)
-            if resolved is not None:
-                winner = resolved
-                end_frame = frame
-                break
+        battle_gen = self._sample_video(video_path, start=window.battle_start, end=window.battle_end)
+        try:
+            for _, frame in battle_gen:
+                counts = self.health_detector.count(frame)
+                resolved = tracker.update(orange=counts.orange, blue=counts.blue)
+                if resolved is not None:
+                    winner = resolved
+                    end_frame = frame
+                    break
+        finally:
+            with contextlib.suppress(Exception):
+                battle_gen.close()
 
         sample_id = stable_sample_id(source, window.round_index, window.layout_time)
         relative_dir = Path("frames") / source.video_sha256[:12]
@@ -238,7 +307,86 @@ class VideoExtractor:
             winner=winner,
             winner_confidence=tracker.confidence if winner is not None else None,
             evidence={key: value.as_posix() for key, value in filenames.items()},
+            extra_reasons=tuple(prep_reasons),
         )
+
+    def _sample_video_nvdec(
+        self,
+        video_path: Path,
+        *,
+        start: float,
+        end: float | None,
+    ):
+        dim_proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,width,height",
+                "-of",
+                "csv=p=0:s=x",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5.0,
+        )
+        parts = dim_proc.stdout.strip().split("x")
+        if len(parts) != 3 or parts[0] != "h264":
+            raise ValueError(f"video is not h264 for NVDEC: {dim_proc.stdout}")
+        width, height = int(parts[1]), int(parts[2])
+
+        cmd = ["ffmpeg", "-hwaccel", "cuda", "-c:v", "h264_cuvid"]
+        if start > 0.0:
+            cmd.extend(["-ss", f"{start:.3f}"])
+        if end is not None:
+            cmd.extend(["-to", f"{end:.3f}"])
+        cmd.extend(
+            [
+                "-i",
+                str(video_path),
+                "-vf",
+                f"fps={self.scan_fps}",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
+                "pipe:1",
+            ]
+        )
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=width * height * 3 * 10,
+        )
+        frame_bytes = width * height * 3
+        frame_index = 0
+        try:
+            assert proc.stdout is not None
+            while True:
+                buf = proc.stdout.read(frame_bytes)
+                if len(buf) < frame_bytes:
+                    break
+                frame = np.frombuffer(buf, dtype=np.uint8).reshape((height, width, 3))
+                timestamp = start + frame_index / self.scan_fps
+                if end is not None and timestamp > end:
+                    break
+                yield timestamp, frame
+                frame_index += 1
+        finally:
+            if proc.stdout is not None:
+                with contextlib.suppress(Exception):
+                    proc.stdout.close()
+            with contextlib.suppress(Exception):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=0.5)
 
     def _sample_video(
         self,
@@ -247,6 +395,22 @@ class VideoExtractor:
         start: float,
         end: float | None,
     ):
+        nvdec_ok = False
+        nvdec_gen = None
+        try:
+            nvdec_gen = self._sample_video_nvdec(video_path, start=start, end=end)
+            for item in nvdec_gen:
+                nvdec_ok = True
+                yield item
+            if nvdec_ok:
+                return
+        except Exception:
+            pass
+        finally:
+            if nvdec_gen is not None:
+                with contextlib.suppress(Exception):
+                    nvdec_gen.close()
+
         capture = cv2.VideoCapture(str(video_path))
         if not capture.isOpened():
             raise ValueError(f"cannot open video: {video_path}")
@@ -307,6 +471,8 @@ def extract_rounds(
     batch_size: int = 32,
     scan_fps: float | None = None,
     max_videos: int | None = None,
+    force: bool = False,
+    workers: int = 8,
 ) -> list[RoundSample]:
     """Run extraction for every Green Vine video and replace the automatic manifest."""
 
@@ -349,60 +515,65 @@ def extract_rounds(
         if video_manifest.exists()
         else scan_inventory(input_dir, video_manifest)
     )
-    ocr = RapidOcrEngine(use_cuda=device != "cpu")
-    count_classifier = (
-        YoloCountClassifier(
-            ocr_model,
-            ocr_class_map,
-            device=device,
-            half=half,
-            batch_size=batch_size,
-        )
-        if ocr_model.is_file() and ocr_class_map.is_file()
-        else None
-    )
-    yolo_portrait_classifier = YoloPortraitClassifier(
-        roster_model,
-        roster_class_map,
-        device=device,
-        half=half,
-        batch_size=batch_size,
-    )
+    fps = scan_fps if scan_fps is not None else config.sample_fps
     portraits_dir = workspace / "assets" / "portraits"
     empty_slot_path = workspace / "assets" / "ui" / "empty_slot.png"
-    if portraits_dir.is_dir():
-        template_classifier = TemplateMatchClassifier(
-            portraits_dir,
-            empty_slot_path=empty_slot_path if empty_slot_path.is_file() else None,
-        )
-        portrait_classifier = DualEngineClassifier(yolo_portrait_classifier, template_classifier)
-    else:
-        portrait_classifier = yolo_portrait_classifier
 
-    fps = scan_fps if scan_fps is not None else config.sample_fps
-    extractor = VideoExtractor(
-        phase_analyzer=OcrPhaseAnalyzer(ocr),
-        roster_recognizer=RosterFrameRecognizer(
-            portrait_classifier,
-            ocr,
-            count_classifier=count_classifier,
-            default_count=1,
-        ),
-        battlefield_detector=YoloBattlefieldDetector(
-            battlefield_model,
-            battlefield_class_map,
+    def make_extractor() -> VideoExtractor:
+        ocr_local = RapidOcrEngine(use_cuda=device != "cpu")
+        count_classifier_local = (
+            YoloCountClassifier(
+                ocr_model,
+                ocr_class_map,
+                device=device,
+                half=half,
+                batch_size=batch_size,
+            )
+            if ocr_model.is_file() and ocr_class_map.is_file()
+            else None
+        )
+        yolo_portrait_local = YoloPortraitClassifier(
+            roster_model,
+            roster_class_map,
             device=device,
             half=half,
             batch_size=batch_size,
-        ),
-        health_detector=HealthBarDetector(),
-        scan_fps=fps,
-        stable_winner_frames=config.stable_winner_frames,
-    )
+        )
+        if portraits_dir.is_dir():
+            template_classifier_local = TemplateMatchClassifier(
+                portraits_dir,
+                empty_slot_path=empty_slot_path if empty_slot_path.is_file() else None,
+            )
+            portrait_classifier_local = DualEngineClassifier(yolo_portrait_local, template_classifier_local)
+        else:
+            portrait_classifier_local = yolo_portrait_local
+
+        return VideoExtractor(
+            phase_analyzer=OcrPhaseAnalyzer(ocr_local),
+            roster_recognizer=RosterFrameRecognizer(
+                portrait_classifier_local,
+                ocr_local,
+                count_classifier=count_classifier_local,
+                default_count=1,
+            ),
+            battlefield_detector=YoloBattlefieldDetector(
+                battlefield_model,
+                battlefield_class_map,
+                device=device,
+                half=half,
+                batch_size=batch_size,
+            ),
+            health_detector=HealthBarDetector(),
+            scan_fps=fps,
+            stable_winner_frames=config.stable_winner_frames,
+        )
+
     rounds_manifest = config.manifest_dir / "rounds.auto.jsonl"
     samples: list[RoundSample] = []
     already_extracted_videos: set[str] = set()
-    if rounds_manifest.is_file():
+    if force and rounds_manifest.is_file():
+        rounds_manifest.unlink(missing_ok=True)
+    elif rounds_manifest.is_file():
         try:
             samples = read_jsonl(rounds_manifest, RoundSample)
             already_extracted_videos = {item.source.video_relpath for item in samples}
@@ -415,26 +586,38 @@ def extract_rounds(
     if max_videos is not None:
         gv_records = gv_records[:max_videos]
 
+    pending_records = [
+        (idx, record)
+        for idx, record in enumerate(gv_records, start=1)
+        if record.relative_path not in already_extracted_videos
+    ]
+
     typer.echo(
-        f"Extracting {len(gv_records)} Green Vine videos at {fps:.1f} fps "
-        f"(already completed: {len(already_extracted_videos)})..."
+        f"Extracting {len(gv_records)} Green Vine videos at {fps:.1f} fps using {workers} worker(s) "
+        f"(already completed: {len(already_extracted_videos)}, pending: {len(pending_records)})..."
     )
-    for index, record in enumerate(gv_records, start=1):
-        if record.relative_path in already_extracted_videos:
-            continue
+
+    manifest_lock = threading.Lock()
+    tls = threading.local()
+
+    def get_thread_extractor() -> VideoExtractor:
+        if not hasattr(tls, "extractor"):
+            tls.extractor = make_extractor()
+        return tls.extractor
+
+    def process_record(record_item: tuple[int, VideoRecord]) -> tuple[list[RoundSample], list[dict[str, str]]]:
+        index, record = record_item
+        extractor = get_thread_extractor()
         path = input_dir / Path(record.relative_path)
         source = SourceRef(video_relpath=record.relative_path, video_sha256=record.sha256)
-        typer.echo(f"[{index}/{len(gv_records)}] {record.relative_path} ({record.duration:.1f}s)...")
+        typer.echo(f"[{index}/{len(gv_records)}] Starting {record.relative_path} ({record.duration:.1f}s)...")
         try:
             extracted = extractor.extract_video(path, source, workspace)
-            samples.extend(extracted)
-            typer.echo(f"  -> Extracted {len(extracted)} rounds (issues: {len(extractor.issues)})")
-            if extracted:
-                samples.sort(
-                    key=lambda item: (item.source.video_relpath.casefold(), item.round_index, item.timestamps.layout)
-                )
-                write_jsonl(config.manifest_dir / "rounds.auto.jsonl", samples)
-            errors.extend(
+            typer.echo(
+                f"[{index}/{len(gv_records)}] Done {record.relative_path} -> "
+                f"{len(extracted)} rounds (issues: {len(extractor.issues)})"
+            )
+            local_errors = [
                 {
                     "video": record.relative_path,
                     "round_index": str(issue.round_index),
@@ -442,10 +625,35 @@ def extract_rounds(
                     "error": issue.detail,
                 }
                 for issue in extractor.issues
-            )
+            ]
+            return extracted, local_errors
         except (OSError, ValueError, RuntimeError) as exc:
-            typer.echo(f"  -> Video error: {exc}", err=True)
-            errors.append({"video": record.relative_path, "kind": "video_error", "error": str(exc)})
+            typer.echo(f"[{index}/{len(gv_records)}] Error {record.relative_path}: {exc}", err=True)
+            return [], [{"video": record.relative_path, "kind": "video_error", "error": str(exc)}]
+
+    if workers <= 1:
+        for item in pending_records:
+            extracted, local_errors = process_record(item)
+            samples.extend(extracted)
+            errors.extend(local_errors)
+            if extracted:
+                samples.sort(
+                    key=lambda s: (s.source.video_relpath.casefold(), s.round_index, s.timestamps.layout)
+                )
+                write_jsonl(config.manifest_dir / "rounds.auto.jsonl", samples)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(process_record, item) for item in pending_records]
+            for future in concurrent.futures.as_completed(futures):
+                extracted, local_errors = future.result()
+                with manifest_lock:
+                    samples.extend(extracted)
+                    errors.extend(local_errors)
+                    if extracted:
+                        samples.sort(
+                            key=lambda s: (s.source.video_relpath.casefold(), s.round_index, s.timestamps.layout)
+                        )
+                        write_jsonl(config.manifest_dir / "rounds.auto.jsonl", samples)
 
     samples.sort(key=lambda item: (item.source.video_relpath.casefold(), item.round_index, item.timestamps.layout))
     write_jsonl(config.manifest_dir / "rounds.auto.jsonl", samples)

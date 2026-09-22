@@ -177,3 +177,43 @@ def test_video_extractor_keeps_successful_round_when_later_round_fails(tmp_path)
     assert len(extractor.issues) == 1
     assert extractor.issues[0].round_index == 2
     assert extractor.issues[0].kind == "window_error"
+
+
+class NoCountdownOnReadPhaseAnalyzer(FakePhaseAnalyzer):
+    def __init__(self):
+        self.second_pass = False
+
+    def analyze(self, frame, timestamp):
+        res = super().analyze(frame, timestamp)
+        if self.second_pass:
+            return FrameSignals(
+                timestamp=res.timestamp,
+                game_visible=res.game_visible,
+                countdown_seconds=None,
+                round_number=res.round_number,
+                layout_score=res.layout_score,
+            )
+        if res.round_number is not None:
+            self.second_pass = True
+        return res
+
+
+def test_video_extractor_prep_validation_flags_unverified_prep_frame(tmp_path):
+    video = tmp_path / "source.mp4"
+    write_video(video)
+    source = SourceRef(video_relpath="绿藤/source.mp4", video_sha256="a" * 64)
+    extractor = VideoExtractor(
+        phase_analyzer=NoCountdownOnReadPhaseAnalyzer(),
+        roster_recognizer=FakeRosterRecognizer(),
+        battlefield_detector=FakeBattlefieldDetector(),
+        health_detector=FakeHealthDetector(),
+        scan_fps=5.0,
+        stable_winner_frames=3,
+    )
+
+    samples = extractor.extract_video(video, source, tmp_path / "workspace")
+
+    assert len(samples) == 1
+    assert samples[0].review_status is ReviewStatus.PENDING
+    assert "unverified_prep_frame" in samples[0].failure_reasons
+    assert any(issue.kind == "prep_validation" for issue in extractor.issues)

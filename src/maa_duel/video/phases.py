@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,7 @@ class _ActiveRound:
     sequence_index: int
     observed_round_number: int | None = None
     prep_time: float | None = None
+    countdown_timestamps: list[float] = field(default_factory=list)
     zero_seen: bool = False
     last_countdown_seconds: int | None = None
     layout_time: float | None = None
@@ -77,7 +78,7 @@ class RoundSegmenter:
                     active = _ActiveRound(sequence_index=len(rounds) + 1)
                 active.last_countdown_seconds = item.countdown_seconds
                 if item.countdown_seconds > 0:
-                    active.prep_time = item.timestamp
+                    active.countdown_timestamps.append(item.timestamp)
                 else:
                     active.zero_seen = True
                 continue
@@ -109,6 +110,8 @@ class RoundSegmenter:
     @staticmethod
     def _finalize(active: _ActiveRound, battle_end: float) -> RoundWindow:
         reasons: list[str] = []
+        if active.countdown_timestamps:
+            active.prep_time = active.countdown_timestamps[len(active.countdown_timestamps) // 2]
         if active.prep_time is None:
             reasons.append("missing_prep")
         if active.layout_time is None:
@@ -125,7 +128,7 @@ class RoundSegmenter:
         if timestamps != sorted(timestamps):
             reasons.append("invalid_timestamp_order")
         return RoundWindow(
-            round_index=active.observed_round_number or active.sequence_index,
+            round_index=active.sequence_index,
             prep_time=active.prep_time,
             layout_time=active.layout_time,
             battle_start=active.battle_start,

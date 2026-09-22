@@ -100,3 +100,24 @@ def test_segmenter_restarts_after_incomplete_round_when_countdown_rises():
     assert rounds[1].prep_time == pytest.approx(6.0)
     assert rounds[1].layout_time == pytest.approx(6.6)
     assert rounds[1].battle_start == pytest.approx(7.2)
+
+
+def test_segmenter_picks_middle_countdown_frame_as_prep_time():
+    signals = [
+        signal(1.0, countdown=5),
+        signal(2.0, countdown=4),
+        signal(3.0, countdown=3),
+        signal(4.0, countdown=2),
+        signal(5.0, countdown=1),
+        signal(5.5, countdown=0),
+        signal(6.0, layout_score=0.9),
+        signal(7.0, round_number=1),
+        signal(10.0),
+    ]
+
+    rounds = RoundSegmenter().segment(signals)
+
+    assert len(rounds) == 1
+    assert rounds[0].complete
+    # Out of [1.0, 2.0, 3.0, 4.0, 5.0], index 5 // 2 = 2, which is 3.0 (countdown=3)
+    assert rounds[0].prep_time == pytest.approx(3.0)

@@ -100,7 +100,14 @@ class RapidOcrEngine:
 
     def __init__(self, *, use_cuda: bool = True) -> None:
         try:
+            import logging
+
             from rapidocr import RapidOCR
+            from rapidocr.utils.log import logger as rapidocr_logger
+
+            rapidocr_logger.setLevel(logging.ERROR)
+            for h in rapidocr_logger.handlers:
+                h.setLevel(logging.ERROR)
         except ImportError as exc:
             raise RuntimeError("RapidOCR is not installed; install the ocr extra") from exc
 
@@ -110,7 +117,16 @@ class RapidOcrEngine:
             import sys
             from pathlib import Path
 
-            site_packages = Path(sys.prefix) / "Lib" / "site-packages"
+            site_packages_win = Path(sys.prefix) / "Lib" / "site-packages"
+            site_packages_linux = (
+                Path(sys.prefix)
+                / "lib"
+                / f"python{sys.version_info.major}.{sys.version_info.minor}"
+                / "site-packages"
+            )
+            site_packages = site_packages_linux if site_packages_linux.is_dir() else site_packages_win
+
+            # Windows DLL directories
             for rel in ("nvidia/cudnn/bin", "nvidia/cublas/bin", "nvidia/cuda_nvrtc/bin", "torch/lib"):
                 dll_path = site_packages / Path(rel)
                 if dll_path.is_dir():
@@ -126,6 +142,15 @@ class RapidOcrEngine:
                 if target.is_file():
                     with contextlib.suppress(OSError):
                         ctypes.CDLL(str(target))
+
+            # Linux shared library directories (.so)
+            for rel in ("nvidia/cudnn/lib", "nvidia/cublas/lib", "nvidia/cuda_nvrtc/lib", "torch/lib"):
+                so_dir = site_packages / Path(rel)
+                if so_dir.is_dir():
+                    os.environ["LD_LIBRARY_PATH"] = str(so_dir) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+                    for so_file in sorted(so_dir.glob("*.so*")):
+                        with contextlib.suppress(OSError):
+                            ctypes.CDLL(str(so_file), mode=ctypes.RTLD_GLOBAL)
 
         params = None
         if use_cuda:

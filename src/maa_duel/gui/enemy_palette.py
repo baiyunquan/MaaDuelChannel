@@ -124,19 +124,16 @@ class EnemyPalette(QWidget):
             # Load thumbnail
             thumb_path = self.workspace / "assets" / "portraits" / f"{enemy_id:04d}" / "thumbnail.png"
             if thumb_path.exists():
-                pix = QPixmap(str(thumb_path)).scaled(
-                    self.icon_size,
-                    self.icon_size,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+                full_pix = QPixmap(str(thumb_path))
+                self.pixmaps[enemy_id] = full_pix
+                item_icon = QIcon(full_pix)
             else:
-                pix = self._create_fallback_icon(enemy_id, name)
-
-            self.pixmaps[enemy_id] = pix
+                fallback_pix = self._create_fallback_icon(enemy_id, name)
+                self.pixmaps[enemy_id] = fallback_pix
+                item_icon = QIcon(fallback_pix)
 
             item = QListWidgetItem()
-            item.setIcon(QIcon(pix))
+            item.setIcon(item_icon)
             item.setToolTip(f"ID {enemy_id}: {name}\n原名: {orig}")
             item.setData(Qt.ItemDataRole.UserRole, enemy_id)
             self.list_widget.addItem(item)
@@ -144,11 +141,11 @@ class EnemyPalette(QWidget):
     def _add_empty_slot_item(self) -> None:
         """Add empty slot (ID 0) option."""
         self.enemies[0] = {"name": "空卡槽", "original_name": "empty"}
-        pix = QPixmap(self.icon_size, self.icon_size)
+        pix = QPixmap(64, 64)
         pix.fill(QColor(40, 40, 40))
         painter = QPainter(pix)
         painter.setPen(QColor(160, 160, 160))
-        font = QFont("Sans", 8)
+        font = QFont("Sans", 12)
         painter.setFont(font)
         painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "空")
         painter.end()
@@ -161,11 +158,11 @@ class EnemyPalette(QWidget):
         self.list_widget.addItem(item)
 
     def _create_fallback_icon(self, enemy_id: int, name: str) -> QPixmap:
-        pix = QPixmap(self.icon_size, self.icon_size)
+        pix = QPixmap(64, 64)
         pix.fill(QColor(50, 50, 60))
         painter = QPainter(pix)
         painter.setPen(QColor(220, 220, 220))
-        font = QFont("Sans", 7)
+        font = QFont("Sans", 10)
         painter.setFont(font)
         painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, str(enemy_id))
         painter.end()

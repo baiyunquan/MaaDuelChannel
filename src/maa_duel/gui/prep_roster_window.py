@@ -38,6 +38,7 @@ class SlotPairCardWidget(QFrame):
     """Card widget displaying a pair: [Real Prep Crop Image] + [Recognized Catalog Portrait]."""
 
     card_clicked = pyqtSignal(object)  # emits self
+    card_modified = pyqtSignal(object)  # emits self
 
     def __init__(
         self,
@@ -113,11 +114,13 @@ class SlotPairCardWidget(QFrame):
         self.crop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.crop_label.setStyleSheet("background-color: #1a1a1a; border: 1px solid #333; border-radius: 4px;")
         if self.crop_pixmap and not self.crop_pixmap.isNull():
-            self.crop_label.setPixmap(
-                self.crop_pixmap.scaled(
-                    50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                )
+            dpr = self.devicePixelRatioF() if hasattr(self, "devicePixelRatioF") else 1.0
+            target_px = max(50, int(50 * dpr))
+            scaled_crop = self.crop_pixmap.scaled(
+                target_px, target_px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             )
+            scaled_crop.setDevicePixelRatio(dpr)
+            self.crop_label.setPixmap(scaled_crop)
         else:
             self.crop_label.setText("切图")
             self.crop_label.setStyleSheet("color: #666; font-size: 10px; border: 1px solid #333;")
@@ -152,11 +155,13 @@ class SlotPairCardWidget(QFrame):
                 "background-color: #222; color: #777; font-size: 11px; border: 1px dashed #444; border-radius: 4px;"
             )
         elif self.catalog_pixmap and not self.catalog_pixmap.isNull():
-            self.catalog_label.setPixmap(
-                self.catalog_pixmap.scaled(
-                    50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                )
+            dpr = self.devicePixelRatioF() if hasattr(self, "devicePixelRatioF") else 1.0
+            target_px = max(50, int(50 * dpr))
+            scaled_cat = self.catalog_pixmap.scaled(
+                target_px, target_px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             )
+            scaled_cat.setDevicePixelRatio(dpr)
+            self.catalog_label.setPixmap(scaled_cat)
             self.catalog_label.setStyleSheet(
                 "background-color: #1a1a1a; border: 1px solid #00aaff; border-radius: 4px;"
             )
@@ -182,6 +187,7 @@ class SlotPairCardWidget(QFrame):
 
     def _on_count_changed(self, val: int) -> None:
         self.slot_data["count"] = val
+        self.card_modified.emit(self)
 
     def set_selected(self, selected: bool) -> None:
         self.is_selected = selected
@@ -198,6 +204,7 @@ class SlotPairCardWidget(QFrame):
             self.count_spin.blockSignals(False)
         self._update_catalog_display()
         self._update_name_display()
+        self.card_modified.emit(self)
 
     def _update_style(self) -> None:
         if self.is_selected:
@@ -306,17 +313,15 @@ class PrepRosterReviewWindow(QMainWindow):
 
         top_layout.addSpacing(16)
 
-        # Action Buttons
-        self.btn_save_page = QPushButton("保存本页修改")
-        self.btn_save_page.setStyleSheet(
-            "QPushButton { background-color: #2a6f3b; color: white; font-weight: bold; "
-            "padding: 6px 12px; border-radius: 4px; border: 1px solid #3b8a4f; }\n"
-            "QPushButton:hover { background-color: #358547; }"
+        # Auto-save indicator & Action button
+        self.autosave_badge = QLabel("⚡ 修改自动保存")
+        self.autosave_badge.setStyleSheet(
+            "color: #4caf50; font-size: 11px; font-weight: bold; "
+            "background-color: #1a2e1a; padding: 4px 8px; border-radius: 4px; border: 1px solid #2e5d2e;"
         )
-        self.btn_save_page.clicked.connect(self.save_current_page_edits)
-        top_layout.addWidget(self.btn_save_page)
+        top_layout.addWidget(self.autosave_badge)
 
-        self.btn_proceed = QPushButton("保存并进入单局拉框 (Enter)")
+        self.btn_proceed = QPushButton("进入单局拉框 -> (Enter)")
         self.btn_proceed.setStyleSheet(
             "QPushButton { background-color: #007acc; color: white; font-weight: bold; "
             "padding: 6px 14px; border-radius: 4px; border: 1px solid #0099ff; }\n"
@@ -448,6 +453,7 @@ class PrepRosterReviewWindow(QMainWindow):
             self.active_slots_filtered = [s for s in self.all_slots if s["enemy_id"] > 0]
 
     def _on_filter_toggled(self) -> None:
+        self.save_current_page_edits(silent=True)
         self._filter_slots()
         self.load_page(0)
 
@@ -510,6 +516,7 @@ class PrepRosterReviewWindow(QMainWindow):
                 parent=self.grid_container,
             )
             card.card_clicked.connect(self._on_card_clicked)
+            card.card_modified.connect(self._on_card_modified)
             self.grid_layout.addWidget(card, row, col)
 
         self.status_bar.showMessage(
@@ -567,7 +574,20 @@ class PrepRosterReviewWindow(QMainWindow):
         name = self.palette.get_enemy_name(enemy_id)
         pix = self.palette.get_enemy_pixmap(enemy_id)
         self.selected_card.update_enemy(enemy_id, name, pix)
-        self.status_bar.showMessage(f"已修改选中卡槽为: {name} (ID {enemy_id})", 3000)
+
+    def _on_card_modified(self, card: SlotPairCardWidget | None = None) -> None:
+        """Automatically persist edits when any card changes."""
+        self.save_current_page_edits(silent=True)
+        if card:
+            eid = card.slot_data["enemy_id"]
+            cnt = card.slot_data["count"]
+            name = card.enemy_name
+            msg = f"已自动保存: [R{card.slot_data['round_index']}] {name} (ID {eid}) x{cnt}"
+            self.status_bar.showMessage(msg, 2500)
+
+    def closeEvent(self, event) -> None:
+        self.save_current_page_edits(silent=True)
+        super().closeEvent(event)
 
     def save_current_page_edits(self, silent: bool = False) -> None:
         """Persist current modified slot values back into RoundSamples and save to corrections.jsonl."""

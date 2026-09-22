@@ -87,13 +87,15 @@ class YoloPortraitClassifier:
     def classify_batch(self, images: list[np.ndarray]) -> list[Classification]:
         if not images:
             return []
-        results = self.model.predict(
-            source=images,
-            device=self.device,
-            half=self.half,
-            batch=self.batch_size,
-            verbose=False,
-        )
+        kwargs: dict[str, Any] = {
+            "source": images,
+            "device": self.device,
+            "batch": self.batch_size,
+            "verbose": False,
+        }
+        if self.half:
+            kwargs["quantize"] = "fp16"
+        results = self.model.predict(**kwargs)
         return [classification_from_result(result, self.class_map) for result in results]
 
 
@@ -148,10 +150,11 @@ class YoloBattlefieldDetector:
             "source": images,
             "conf": self.confidence,
             "device": self.device,
-            "half": self.half,
             "batch": self.batch_size,
             "verbose": False,
         }
+        if self.half:
+            kwargs["quantize"] = "fp16"
         if classes_filter is not None:
             kwargs["classes"] = classes_filter
 
@@ -182,13 +185,15 @@ class YoloCountClassifier:
     def classify_batch(self, images: list[np.ndarray]) -> list[CountClassification]:
         if not images:
             return []
-        results = self.model.predict(
-            source=images,
-            device=self.device,
-            half=self.half,
-            batch=self.batch_size,
-            verbose=False,
-        )
+        kwargs: dict[str, Any] = {
+            "source": images,
+            "device": self.device,
+            "batch": self.batch_size,
+            "verbose": False,
+        }
+        if self.half:
+            kwargs["quantize"] = "fp16"
+        results = self.model.predict(**kwargs)
         output = []
         for result in results:
             class_index = int(result.probs.top1)
