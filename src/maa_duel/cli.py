@@ -121,7 +121,7 @@ def train_vision(
     ] = None,
     batch: Annotated[float, typer.Option(help="Batch size, -1 for auto, or a 0-1 GPU memory fraction.")] = -1,
     workers: Annotated[int, typer.Option(min=0, help="DataLoader worker processes.")] = 4,
-    cache: Annotated[str, typer.Option(help="Ultralytics cache mode: disk, ram, or none.")] = "disk",
+    cache: Annotated[str, typer.Option(help="Ultralytics cache mode: disk, ram, or none.")] = "ram",
     amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Use automatic mixed precision.")] = True,
     deterministic: Annotated[bool, typer.Option("--deterministic/--no-deterministic")] = True,
     seed: Annotated[int, typer.Option()] = 20260920,
