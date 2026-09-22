@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -89,6 +90,8 @@ class EnemyPalette(QWidget):
         # Hover Info Label
         self.info_label = QLabel("鼠标悬停查看详情，点击选择")
         self.info_label.setStyleSheet("color: #aaaaaa; font-size: 11px; padding: 2px;")
+        self.info_label.setWordWrap(True)
+        self.info_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         box_layout.addWidget(self.info_label)
 
         layout.addWidget(box)

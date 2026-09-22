@@ -17,8 +17,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
-    QSplitter,
     QStatusBar,
     QVBoxLayout,
     QWidget,
@@ -54,15 +54,17 @@ class SlotPairCardWidget(QFrame):
         self.enemy_name = enemy_name
         self.is_selected = False
 
-        self.setFixedSize(176, 120)
+        self.setMinimumHeight(112)
+        self.setMinimumWidth(130)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._init_ui()
         self._update_style()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(3)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
 
         # Header: Round badge + Count spinbox
         header_layout = QHBoxLayout()
@@ -107,13 +109,13 @@ class SlotPairCardWidget(QFrame):
 
         # Left: Real in-game prep crop
         self.crop_label = QLabel()
-        self.crop_label.setFixedSize(54, 54)
+        self.crop_label.setFixedSize(50, 50)
         self.crop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.crop_label.setStyleSheet("background-color: #1a1a1a; border: 1px solid #333; border-radius: 4px;")
         if self.crop_pixmap and not self.crop_pixmap.isNull():
             self.crop_label.setPixmap(
                 self.crop_pixmap.scaled(
-                    54, 54, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                    50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
                 )
             )
         else:
@@ -127,7 +129,7 @@ class SlotPairCardWidget(QFrame):
 
         # Right: Catalog thumbnail
         self.catalog_label = QLabel()
-        self.catalog_label.setFixedSize(54, 54)
+        self.catalog_label.setFixedSize(50, 50)
         self.catalog_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.catalog_label.setStyleSheet("background-color: #1a1a1a; border: 1px solid #444; border-radius: 4px;")
         self._update_catalog_display()
@@ -152,7 +154,7 @@ class SlotPairCardWidget(QFrame):
         elif self.catalog_pixmap and not self.catalog_pixmap.isNull():
             self.catalog_label.setPixmap(
                 self.catalog_pixmap.scaled(
-                    54, 54, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                    50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
                 )
             )
             self.catalog_label.setStyleSheet(
@@ -262,14 +264,12 @@ class PrepRosterReviewWindow(QMainWindow):
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
         main_layout.setContentsMargins(6, 6, 6, 6)
-        main_layout.setSpacing(6)
+        main_layout.setSpacing(8)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # ----------------- Left Area: 80% (Dense Grid + Navigation) -----------------
+        # ----------------- Left Area: Dense Grid + Navigation -----------------
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(6)
 
         # Top Control Bar
@@ -330,24 +330,31 @@ class PrepRosterReviewWindow(QMainWindow):
         # Center Scrollable Dense Grid
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setStyleSheet("QScrollArea { background-color: #141414; border: 1px solid #2d2d2d; }")
 
         self.grid_container = QWidget()
         self.grid_container.setStyleSheet("background-color: #141414;")
         self.grid_layout = QGridLayout(self.grid_container)
-        self.grid_layout.setContentsMargins(8, 8, 8, 8)
-        self.grid_layout.setSpacing(8)
-        self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.grid_layout.setContentsMargins(6, 6, 6, 6)
+        self.grid_layout.setSpacing(6)
+        self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        for col in range(10):
+            self.grid_layout.setColumnStretch(col, 1)
+        for row in range(5):
+            self.grid_layout.setRowStretch(row, 1)
 
         self.scroll_area.setWidget(self.grid_container)
         left_layout.addWidget(self.scroll_area)
 
-        splitter.addWidget(left_widget)
+        main_layout.addWidget(left_widget, stretch=1)
 
-        # ----------------- Right Area: 20% (Enemy Palette) -----------------
+        # ----------------- Right Area: Fixed Width 360px -----------------
         right_widget = QWidget()
+        right_widget.setFixedWidth(360)
         right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(4, 4, 4, 4)
+        right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
 
         right_title = QLabel("目标敌人选择栏 (先选左侧卡片，再点此处)")
@@ -358,11 +365,7 @@ class PrepRosterReviewWindow(QMainWindow):
         self.palette.enemy_selected.connect(self._on_palette_enemy_selected)
         right_layout.addWidget(self.palette)
 
-        splitter.addWidget(right_widget)
-
-        splitter.setStretchFactor(0, 8)
-        splitter.setStretchFactor(1, 2)
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(right_widget, stretch=0)
         self.setCentralWidget(main_widget)
 
         # Status Bar
