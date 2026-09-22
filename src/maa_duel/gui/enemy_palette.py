@@ -37,7 +37,7 @@ class EnemyPalette(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        box = QGroupBox("📖 敌人图谱 (点击赋予选中卡槽)")
+        box = QGroupBox("敌人图谱 (点击赋予选中卡槽)")
         box_layout = QVBoxLayout(box)
         box_layout.setContentsMargins(6, 6, 6, 6)
         box_layout.setSpacing(4)
@@ -45,7 +45,7 @@ class EnemyPalette(QWidget):
         # Search Bar
         search_layout = QHBoxLayout()
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("🔍 搜索名称 / 原名 / ID...")
+        self.search_edit.setPlaceholderText(" 搜索名称 / 原名 / ID...")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.textChanged.connect(self._filter_enemies)
         search_layout.addWidget(self.search_edit)

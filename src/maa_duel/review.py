@@ -229,12 +229,12 @@ def launch_local_review(workspace: Path, port: int = 7860) -> None:
             or "无"
         )
         reasons_text = (
-            f"\n> ⚠️ **异常/置信度提示**: `{', '.join(sample.failure_reasons)}`" if sample.failure_reasons else ""
+            f"\n> [提示] **异常/置信度提示**: `{', '.join(sample.failure_reasons)}`" if sample.failure_reasons else ""
         )
 
         winner_text = sample.winner.value if sample.winner else "未知"
         title_md = (
-            f"### 📍 对局 {index + 1} / {len(samples)} (样本: `{sample.sample_id}`)\n"
+            f"### 对局 {index + 1} / {len(samples)} (样本: `{sample.sample_id}`)\n"
             f"- **回合数**: 第 {sample.round_index} 回合 | **来源视频**: `{sample.source.video_relpath}`\n"
             f"- **审核状态**: `{sample.review_status.value}` | **预测胜方**: `{winner_text}`\n"
             f"- **左方识别阵容**: {left_desc}\n"
@@ -294,17 +294,17 @@ def launch_local_review(workspace: Path, port: int = 7860) -> None:
             winner = gr.Dropdown(["left", "right"], label="获胜方 (Winner)")
             note = gr.Textbox(label="审核备注 (Review note)")
         with gr.Row():
-            previous = gr.Button("⬅️ 上一局 (Previous)")
-            accept = gr.Button("✅ 通过 (Accept)", variant="primary")
-            reject = gr.Button("❌ 驳回 (Reject)", variant="stop")
-            following = gr.Button("➡️ 下一局 (Next)")
+            previous = gr.Button("<- 上一局 (Previous)")
+            accept = gr.Button("通过 (Accept)", variant="primary")
+            reject = gr.Button("驳回 (Reject)", variant="stop")
+            following = gr.Button("-> 下一局 (Next)")
         with gr.Row():
             jump_number = gr.Number(
                 value=1, minimum=1, maximum=len(samples), step=1, label=f"跳转至指定局数 (1 - {len(samples)})"
             )
-            jump_btn = gr.Button("🚀 跳转", scale=0)
+            jump_btn = gr.Button("跳转", scale=0)
 
-        with gr.Accordion("📖 绿藤城敌人图鉴与 ID 对照表 (Enemy Catalog Reference)", open=False):
+        with gr.Accordion("绿藤城敌人图鉴与 ID 对照表 (Enemy Catalog Reference)", open=False):
             gr.Dataframe(
                 value=catalog_rows,
                 headers=["Enemy ID", "常用名", "原始代码名"],

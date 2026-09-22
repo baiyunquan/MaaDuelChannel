@@ -542,3 +542,4 @@ class AnnotationCanvas(QGraphicsView):
             else:
                 right_counts[box.enemy_id] = right_counts.get(box.enemy_id, 0) + 1
         return left_counts, right_counts
+

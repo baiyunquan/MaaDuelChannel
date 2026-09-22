@@ -47,7 +47,7 @@ class VideoTimelineFineTuner(QWidget):
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(6)
 
-        box = QGroupBox("⏱️ 三证据帧时间定位与微调 (Step 1)")
+        box = QGroupBox("三证据帧时间定位与微调 (Step 1)")
         box_layout = QVBoxLayout(box)
         box_layout.setContentsMargins(6, 6, 6, 6)
         box_layout.setSpacing(6)
@@ -134,7 +134,7 @@ class VideoTimelineFineTuner(QWidget):
         box_layout.addLayout(step_layout)
 
         # 6. Save as Evidence Frame button
-        self.save_btn = QPushButton("💾 设为当前证据帧并重新落盘")
+        self.save_btn = QPushButton("设为当前证据帧并重新落盘")
         self.save_btn.setStyleSheet(
             "QPushButton { padding: 6px; font-size: 11px; font-weight: bold; "
             "background-color: #1e6b36; color: #ffffff; border: 1px solid #2e8b46; border-radius: 4px; }\n"

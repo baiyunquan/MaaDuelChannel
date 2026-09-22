@@ -143,10 +143,10 @@ def test_roster_panel(qapp, mock_workspace):
 
     # Update quotas
     panel.update_quotas(left_counts={25: 2}, right_counts={})
-    assert panel.slots[0].quota_label.text() == "✓ 2/2"
+    assert panel.slots[0].quota_label.text() == "[OK] 2/2"
 
     panel.update_quotas(left_counts={25: 1}, right_counts={})
-    assert panel.slots[0].quota_label.text() == "⏳ 1/2"
+    assert panel.slots[0].quota_label.text() == "[待补] 1/2"
 
     panel.update_quotas(left_counts={25: 3}, right_counts={})
     assert panel.slots[0].quota_label.text() == "! 3/2"
@@ -227,3 +227,13 @@ def test_reviewer_main_window_workflow(qapp, mock_workspace, monkeypatch):
     assert saved.review_status == ReviewStatus.ACCEPTED
     assert saved.left.roster_counts() == saved.left.unit_counts()
     assert saved.right.roster_counts() == saved.right.unit_counts()
+
+
+def test_instruction_guide_dialog(qapp):
+    from maa_duel.gui.guide_dialog import InstructionGuideDialog
+
+    dialog = InstructionGuideDialog()
+    assert "操作指引" in dialog.windowTitle()
+    assert dialog.width() > 0
+    assert dialog.height() > 0
+

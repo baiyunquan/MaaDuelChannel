@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication
 
 from maa_duel.gui.canvas import AnnotationCanvas
 from maa_duel.gui.enemy_palette import EnemyPalette
+from maa_duel.gui.guide_dialog import InstructionGuideDialog
 from maa_duel.gui.reviewer_window import ReviewerMainWindow
 from maa_duel.gui.roster_panel import RosterPanel
 from maa_duel.gui.video_timeline import VideoTimelineFineTuner
@@ -16,6 +17,7 @@ from maa_duel.gui.video_timeline import VideoTimelineFineTuner
 __all__ = [
     "AnnotationCanvas",
     "EnemyPalette",
+    "InstructionGuideDialog",
     "ReviewerMainWindow",
     "RosterPanel",
     "VideoTimelineFineTuner",

@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 from maa_duel.gui.canvas import AnnotationBoxItem, AnnotationCanvas, CanvasMode
 from maa_duel.gui.enemy_palette import EnemyPalette
+from maa_duel.gui.guide_dialog import InstructionGuideDialog
 from maa_duel.gui.roster_panel import RosterPanel
 from maa_duel.gui.video_timeline import VideoTimelineFineTuner
 from maa_duel.review import ReviewCorrection, ReviewStore
@@ -52,6 +53,7 @@ class ReviewerMainWindow(QMainWindow):
         self.samples: list[RoundSample] = []
         self.filtered_indices: list[int] = []
         self.current_idx_in_filtered: int = 0
+        self.guide_dialog: InstructionGuideDialog | None = None
 
         self._init_ui()
         self._init_shortcuts()
@@ -102,7 +104,7 @@ class ReviewerMainWindow(QMainWindow):
         nav_layout.setContentsMargins(6, 6, 6, 6)
         nav_layout.setSpacing(4)
 
-        nav_title = QLabel("📋 样本导航")
+        nav_title = QLabel("样本导航")
         nav_title.setStyleSheet("font-weight: bold; font-size: 13px; color: #ffffff;")
         nav_layout.addWidget(nav_title)
 
@@ -143,9 +145,9 @@ class ReviewerMainWindow(QMainWindow):
         nav_layout.addWidget(self.reasons_label)
 
         nav_btns = QHBoxLayout()
-        self.prev_btn = QPushButton("⬅️ 上一局 (A)")
+        self.prev_btn = QPushButton("<- 上一局 (A)")
         self.prev_btn.clicked.connect(self.prev_sample)
-        self.next_btn = QPushButton("➡️ 下一局 (D)")
+        self.next_btn = QPushButton("-> 下一局 (D)")
         self.next_btn.clicked.connect(self.next_sample)
         nav_btns.addWidget(self.prev_btn)
         nav_btns.addWidget(self.next_btn)
@@ -165,7 +167,7 @@ class ReviewerMainWindow(QMainWindow):
         verdict_layout.setContentsMargins(6, 6, 6, 6)
         verdict_layout.setSpacing(6)
 
-        verdict_title = QLabel("⚖️ 胜负与审核确认")
+        verdict_title = QLabel("胜负与审核确认")
         verdict_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #ffffff;")
         verdict_layout.addWidget(verdict_title)
 
@@ -191,7 +193,7 @@ class ReviewerMainWindow(QMainWindow):
 
         # Action buttons
         actions_layout = QHBoxLayout()
-        self.accept_btn = QPushButton("✅ 通过 (Accept)")
+        self.accept_btn = QPushButton("通过 (Accept)")
         self.accept_btn.setStyleSheet(
             "QPushButton { background-color: #1e7038; color: white; font-weight: bold; "
             "padding: 8px; border-radius: 4px; border: 1px solid #2e9048; }\n"
@@ -199,7 +201,7 @@ class ReviewerMainWindow(QMainWindow):
         )
         self.accept_btn.clicked.connect(lambda: self.save_verdict(ReviewStatus.ACCEPTED))
 
-        self.reject_btn = QPushButton("❌ 驳回 (Reject)")
+        self.reject_btn = QPushButton("驳回 (Reject)")
         self.reject_btn.setStyleSheet(
             "QPushButton { background-color: #7a2222; color: white; font-weight: bold; "
             "padding: 8px; border-radius: 4px; border: 1px solid #993333; }\n"
@@ -226,44 +228,51 @@ class ReviewerMainWindow(QMainWindow):
         self.toolbar = QToolBar("标注工具栏")
         self.toolbar.setStyleSheet("QToolBar { background-color: #262626; border: 1px solid #3c3c3c; }")
 
-        self.act_select = QAction("✋ 选择/移动", self)
+        self.act_select = QAction("选择/移动", self)
         self.act_select.setCheckable(True)
         self.act_select.setChecked(True)
         self.act_select.triggered.connect(lambda: self._set_canvas_mode(CanvasMode.SELECT))
         self.toolbar.addAction(self.act_select)
 
-        self.act_create = QAction("➕ 绘制新框", self)
+        self.act_create = QAction("+ 绘制新框", self)
         self.act_create.setCheckable(True)
         self.act_create.triggered.connect(lambda: self._set_canvas_mode(CanvasMode.CREATE))
         self.toolbar.addAction(self.act_create)
 
         self.toolbar.addSeparator()
 
-        self.act_delete = QAction("🗑️ 删除选中框 (Del)", self)
+        self.act_delete = QAction("删除选中框 (Del)", self)
         self.act_delete.triggered.connect(self._delete_selected_box)
         self.toolbar.addAction(self.act_delete)
 
-        self.act_reload_boxes = QAction("🔄 还原自动检测框", self)
+        self.act_reload_boxes = QAction("还原自动检测框", self)
         self.act_reload_boxes.triggered.connect(self._reload_boxes)
         self.toolbar.addAction(self.act_reload_boxes)
 
         self.toolbar.addSeparator()
 
-        self.act_zoom_in = QAction("🔍+", self)
+        self.act_zoom_in = QAction("放大 (+)", self)
         self.act_zoom_in.triggered.connect(lambda: self.canvas.zoom(1.2))
         self.toolbar.addAction(self.act_zoom_in)
 
-        self.act_zoom_out = QAction("🔍-", self)
+        self.act_zoom_out = QAction("缩小 (-)", self)
         self.act_zoom_out.triggered.connect(lambda: self.canvas.zoom(1.0 / 1.2))
         self.toolbar.addAction(self.act_zoom_out)
 
-        self.act_fit = QAction("🔲 自适应", self)
+        self.act_fit = QAction("自适应", self)
         self.act_fit.triggered.connect(self._fit_canvas)
         self.toolbar.addAction(self.act_fit)
 
         self.act_reset_zoom = QAction("1:1", self)
         self.act_reset_zoom.triggered.connect(self._reset_canvas_zoom)
         self.toolbar.addAction(self.act_reset_zoom)
+
+        self.toolbar.addSeparator()
+
+        self.act_guide = QAction("操作指引 (F1)", self)
+        self.act_guide.setToolTip("打开独立操作指引与快捷键速查窗口")
+        self.act_guide.triggered.connect(self.show_guide_dialog)
+        self.toolbar.addAction(self.act_guide)
 
         center_layout.addWidget(self.toolbar)
 
@@ -309,7 +318,7 @@ class ReviewerMainWindow(QMainWindow):
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("就绪")
+        self.status_bar.showMessage("就绪 | 提示: 按 F1 查看独立操作指引与快捷键说明")
 
     def _init_shortcuts(self) -> None:
         # A: prev, D: next
@@ -318,10 +327,20 @@ class ReviewerMainWindow(QMainWindow):
         # V: Select mode, R: Create mode
         QShortcut(QKeySequence("V"), self, lambda: self._set_canvas_mode(CanvasMode.SELECT))
         QShortcut(QKeySequence("R"), self, lambda: self._set_canvas_mode(CanvasMode.CREATE))
+        # F1: Operation guide
+        QShortcut(QKeySequence("F1"), self, self.show_guide_dialog)
         # Slots 1..6 shortcuts
         for i in range(6):
             key = str(i + 1)
             QShortcut(QKeySequence(key), self, lambda idx=i: self._on_shortcut_slot(idx))
+
+    def show_guide_dialog(self) -> None:
+        """Open or focus the independent operation guide window."""
+        if self.guide_dialog is None:
+            self.guide_dialog = InstructionGuideDialog(self)
+        self.guide_dialog.show()
+        self.guide_dialog.raise_()
+        self.guide_dialog.activateWindow()
 
     def load_dataset(self) -> None:
         manifest_path = self.workspace / "manifests" / "rounds.auto.jsonl"
@@ -403,7 +422,7 @@ class ReviewerMainWindow(QMainWindow):
 
         if sample.failure_reasons:
             self.reasons_label.show()
-            self.reasons_label.setText("⚠️ 异常: " + ", ".join(sample.failure_reasons))
+            self.reasons_label.setText("[提示] 异常: " + ", ".join(sample.failure_reasons))
         else:
             self.reasons_label.hide()
 

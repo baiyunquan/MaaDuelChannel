@@ -59,7 +59,7 @@ class SlotWidget(QFrame):
 
         header_layout.addStretch()
 
-        self.clear_btn = QPushButton("✕")
+        self.clear_btn = QPushButton("X")
         self.clear_btn.setFixedSize(18, 18)
         self.clear_btn.setToolTip("清空卡槽")
         self.clear_btn.setStyleSheet(
@@ -178,13 +178,13 @@ class SlotWidget(QFrame):
 
         text = f"{self.drawn_count}/{self.count}"
         if self.drawn_count == self.count:
-            self.quota_label.setText(f"✓ {text}")
+            self.quota_label.setText(f"[OK] {text}")
             self.quota_label.setStyleSheet(
                 "background-color: #1b4d24; color: #55ff77; font-weight: bold; "
                 "border-radius: 3px; font-size: 11px; padding: 2px 4px;"
             )
         elif self.drawn_count < self.count:
-            self.quota_label.setText(f"⏳ {text}")
+            self.quota_label.setText(f"[待补] {text}")
             self.quota_label.setStyleSheet(
                 "background-color: #553e10; color: #ffbb33; "
                 "border-radius: 3px; font-size: 11px; padding: 2px 4px;"
@@ -229,7 +229,7 @@ class RosterPanel(QWidget):
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(6)
 
-        group = QGroupBox("🎯 本局阵容卡槽 (共 6 槽，按数字键 1~6 切换)")
+        group = QGroupBox("本局阵容卡槽 (共 6 槽，按数字键 1~6 切换)")
         group_layout = QVBoxLayout(group)
         group_layout.setContentsMargins(6, 6, 6, 6)
         group_layout.setSpacing(6)
@@ -244,7 +244,7 @@ class RosterPanel(QWidget):
         slots_layout.setSpacing(6)
 
         # Left Side Header
-        left_label = QLabel("⬅️ 左方阵容 (Slot 1..3)")
+        left_label = QLabel("<- 左方阵容 (Slot 1..3)")
         left_label.setStyleSheet("color: #ffaa33; font-weight: bold; font-size: 12px; margin-top: 2px;")
         slots_layout.addWidget(left_label)
 
@@ -258,7 +258,7 @@ class RosterPanel(QWidget):
             slots_layout.addWidget(slot)
 
         # Right Side Header
-        right_label = QLabel("➡️ 右方阵容 (Slot 4..6)")
+        right_label = QLabel("-> 右方阵容 (Slot 4..6)")
         right_label.setStyleSheet("color: #33bbff; font-weight: bold; font-size: 12px; margin-top: 8px;")
         slots_layout.addWidget(right_label)
 
