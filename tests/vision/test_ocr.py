@@ -3,7 +3,10 @@ import pytest
 from maa_duel.vision.ocr import parse_count, parse_countdown, parse_round_number
 
 
-@pytest.mark.parametrize(("text", "expected"), [("×12", 12), ("x 4", 4), ("O8", 8), (" 3 ", 3)])
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [("×12", 12), ("x 4", 4), ("O8", 8), (" 3 ", 3), ("+4", 4), ("*5", 5)],
+)
 def test_parse_count_normalizes_common_ocr_symbols(text, expected):
     assert parse_count(text) == expected
 

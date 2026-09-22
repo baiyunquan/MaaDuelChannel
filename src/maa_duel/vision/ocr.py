@@ -36,7 +36,7 @@ _DIGIT_REPLACEMENTS = str.maketrans(
 
 
 def _numeric_text(text: str, *, allow_separator: bool) -> str:
-    candidate = text.strip().lstrip("xX×").strip()
+    candidate = text.strip().lstrip("xX×+*").strip()
     allowed = r"[0-9OoDQIl|\s:.：．-]+" if allow_separator else r"[0-9OoDQIl|\s]+"
     if not re.fullmatch(allowed, candidate):
         digits = re.findall(r"\d+", candidate)

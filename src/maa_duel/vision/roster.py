@@ -82,6 +82,22 @@ def calculate_safe_zone(width: int, height: int) -> tuple[int, int, int, int]:
     return offset_x, offset_y, safe_width, safe_height
 
 
+def _make_count_rect(
+    cx: float, cy: float, r: float, side: SideName, width: int, height: int
+) -> NormalizedRect:
+    y1 = max(0.0, (cy + r * 0.20) / height)
+    y2 = min(1.0, (cy + r * 1.15) / height)
+    if side == "left":
+        # Left team: count text is at bottom-right of the circle
+        x1 = max(0.0, (cx + r * 0.15) / width)
+        x2 = min(1.0, (cx + r * 1.15) / width)
+    else:
+        # Right team: count text is at bottom-left of the circle (mirrored towards center)
+        x1 = max(0.0, (cx - r * 1.15) / width)
+        x2 = min(1.0, (cx - r * 0.15) / width)
+    return (x1, y1, x2, y2)
+
+
 def default_slot_specs(image_shape: tuple[int, ...] | None = None) -> list[SlotSpec]:
     """
     Returns the 6 nominal SlotSpecs mapped into the 16:9 safe zone for the given image shape.
@@ -103,12 +119,7 @@ def default_slot_specs(image_shape: tuple[int, ...] | None = None) -> list[SlotS
                 min(1.0, (cx + r) / width),
                 min(1.0, (cy + r) / height),
             )
-            count_rect = (
-                max(0.0, (cx + r * 0.25) / width),
-                max(0.0, cy / height),
-                min(1.0, (cx + r * 1.25) / width),
-                min(1.0, (cy + r * 0.95) / height),
-            )
+            count_rect = _make_count_rect(cx, cy, r, side, width, height)
             specs.append(
                 SlotSpec(
                     side=side,
@@ -202,12 +213,7 @@ def detect_slot_specs(frame: np.ndarray) -> list[SlotSpec]:
             min(1.0, (cx + r) / width),
             min(1.0, (cy + r) / height),
         )
-        count_rect = (
-            max(0.0, (cx + r * 0.25) / width),
-            max(0.0, cy / height),
-            min(1.0, (cx + r * 1.25) / width),
-            min(1.0, (cy + r * 0.95) / height),
-        )
+        count_rect = _make_count_rect(cx, cy, r, spec.side, width, height)
         final_specs.append(
             SlotSpec(
                 side=spec.side,
@@ -225,7 +231,8 @@ def make_portrait_mask(size: int = 64) -> np.ndarray:
     - 255 inside inscribed circle (radius ~0.44 * size).
     - 0 outside the circle (eliminating team red/blue square corners).
     - 0 at top-left corner (masking out HUD status symbols).
-    - 0 at bottom-right corner (masking out 'x1', 'x2' count text).
+    - 0 at bottom-right corner (masking out count text on left slots).
+    - 0 at bottom-left corner (masking out count text on right slots).
     """
     mask = np.zeros((size, size), dtype=np.uint8)
     cv2.circle(mask, (size // 2, size // 2), int(size * 0.44), 255, -1)
@@ -233,6 +240,8 @@ def make_portrait_mask(size: int = 64) -> np.ndarray:
     mask[:tl, :tl] = 0
     br = int(size * 0.65)
     mask[br:, br:] = 0
+    bl = int(size * 0.35)
+    mask[br:, :bl] = 0
     return mask
 
 
@@ -523,7 +532,7 @@ def fuse_roster_observations(
         count_votes: dict[int, float] = defaultdict(float)
         for value in values:
             type_votes[value.enemy_id] += value.type_confidence
-            count_weight = max(0.5, value.count_confidence)
+            count_weight = max(0.2, value.count_confidence)
             count_votes[value.count] += count_weight
         enemy_id = max(type_votes, key=type_votes.get)
         count = max(count_votes, key=count_votes.get)
@@ -532,7 +541,7 @@ def fuse_roster_observations(
         type_agreement = type_votes[enemy_id] / total_type if total_type > 0 else 1.0
         count_agreement = count_votes[count] / total_count if total_count > 0 else 1.0
         selected_type_confidences = [value.type_confidence for value in values if value.enemy_id == enemy_id]
-        selected_count_confidences = [max(0.5, value.count_confidence) for value in values if value.count == count]
+        selected_count_confidences = [max(0.2, value.count_confidence) for value in values if value.count == count]
         confidence = min(
             type_agreement,
             count_agreement,

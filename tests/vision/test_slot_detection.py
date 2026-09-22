@@ -49,6 +49,14 @@ def test_default_slot_specs_layout() -> None:
         # Nominal center Y should be ~0.894
         assert abs(cy - 0.8944) < 0.01
 
+        # Count rect symmetry: left side count is to the right; right side count is to the left
+        cx = (x1 + x2) / 2
+        cx_cnt = (s.count_rect[0] + s.count_rect[2]) / 2
+        if s.side == "left":
+            assert cx_cnt > cx
+        else:
+            assert cx_cnt < cx
+
 
 def test_detect_slot_specs_synthetic_fallback() -> None:
     # Blank frame: should fall back to default_slot_specs
