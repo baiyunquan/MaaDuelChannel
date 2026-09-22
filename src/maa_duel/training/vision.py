@@ -206,12 +206,12 @@ def train_vision_model(
     *,
     all_samples: bool,
     epochs: int = 100,
-    image_size: int = 640,
+    image_size: int | None = None,
     device: str = "0",
     base_model: str | None = None,
     dataset_version: str | None = None,
     batch: int | float = -1,
-    workers: int = 8,
+    workers: int = 4,
     cache: str | bool = "disk",
     amp: bool = True,
     deterministic: bool = True,
@@ -222,6 +222,15 @@ def train_vision_model(
         raise ValueError("vision training requires --all because this project does not create a validation split")
     if task not in {"roster", "battlefield", "ocr"}:
         raise ValueError("task must be roster, battlefield, or ocr")
+
+    if image_size is None or image_size <= 0:
+        image_size = 128 if task in {"roster", "ocr"} else 640
+
+    if batch == -1 or batch <= 0:
+        batch = 64 if task in {"roster", "ocr"} else 16
+
+    workers = min(workers, 4)
+
     try:
         from ultralytics import YOLO
     except ImportError as exc:

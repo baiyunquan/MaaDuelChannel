@@ -113,14 +113,14 @@ def train_vision(
     workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
     all_samples: Annotated[bool, typer.Option("--all", help="Use every available sample.")] = False,
     epochs: Annotated[int, typer.Option(min=1)] = 100,
-    image_size: Annotated[int, typer.Option(min=64)] = 640,
+    image_size: Annotated[int | None, typer.Option(min=64)] = None,
     device: Annotated[str, typer.Option(help="Ultralytics device, for example 0 or cpu.")] = "0",
     base_model: Annotated[str | None, typer.Option(help="Override the default YOLO checkpoint.")] = None,
     dataset_version: Annotated[
         str | None, typer.Option(help="Reviewed dataset version under workspace/datasets.")
     ] = None,
     batch: Annotated[float, typer.Option(help="Batch size, -1 for auto, or a 0-1 GPU memory fraction.")] = -1,
-    workers: Annotated[int, typer.Option(min=0, help="DataLoader worker processes.")] = 8,
+    workers: Annotated[int, typer.Option(min=0, help="DataLoader worker processes.")] = 4,
     cache: Annotated[str, typer.Option(help="Ultralytics cache mode: disk, ram, or none.")] = "disk",
     amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Use automatic mixed precision.")] = True,
     deterministic: Annotated[bool, typer.Option("--deterministic/--no-deterministic")] = True,
