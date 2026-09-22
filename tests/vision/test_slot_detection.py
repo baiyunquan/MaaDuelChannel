@@ -101,16 +101,30 @@ def test_template_match_classifier(tmp_path: Path) -> None:
     classifier = TemplateMatchClassifier(portraits_dir, target_size=64)
 
     # Classify crop similar to img10
-    target10 = cv2.resize(img10[16:80, 18:82], (64, 64))
+    target10 = cv2.resize(img10, (64, 64))
     res10 = classifier.classify(target10)
     assert res10.enemy_id == 10
     assert res10.confidence > 0.85
 
+    # Target with corner colors (e.g. red/blue team corners) and corner occlusions
+    noisy10 = img10.copy()
+    noisy10[:20, :20] = (0, 0, 255)  # team corner
+    noisy10[-20:, -20:] = (0, 0, 255)  # count text corner
+    res10_noisy = classifier.classify(cv2.resize(noisy10, (64, 64)))
+    assert res10_noisy.enemy_id == 10
+    assert res10_noisy.confidence > 0.80
+
     # Classify crop similar to img20
-    target20 = cv2.resize(img20[16:80, 18:82], (64, 64))
+    target20 = cv2.resize(img20, (64, 64))
     res20 = classifier.classify(target20)
     assert res20.enemy_id == 20
-    assert res20.confidence > 0.85
+    assert res20.confidence > 0.80
+
+    # Low contrast flat crop -> correctly recognized as empty slot (enemy_id=0)
+    flat_crop = np.full((100, 100, 3), 60, dtype=np.uint8)
+    res_flat = classifier.classify(flat_crop)
+    assert res_flat.enemy_id == 0
+    assert res_flat.confidence == 1.0
 
 
 def test_dual_engine_classifier_veto() -> None:

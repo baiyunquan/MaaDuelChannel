@@ -219,9 +219,37 @@ def detect_slot_specs(frame: np.ndarray) -> list[SlotSpec]:
     return final_specs
 
 
+def make_portrait_mask(size: int = 64) -> np.ndarray:
+    """
+    Creates an alpha mask for circular portrait slots:
+    - 255 inside inscribed circle (radius ~0.44 * size).
+    - 0 outside the circle (eliminating team red/blue square corners).
+    - 0 at top-left corner (masking out HUD status symbols).
+    - 0 at bottom-right corner (masking out 'x1', 'x2' count text).
+    """
+    mask = np.zeros((size, size), dtype=np.uint8)
+    cv2.circle(mask, (size // 2, size // 2), int(size * 0.44), 255, -1)
+    tl = int(size * 0.28)
+    mask[:tl, :tl] = 0
+    br = int(size * 0.65)
+    mask[br:, br:] = 0
+    return mask
+
+
+def make_circle_mask(size: int = 64) -> np.ndarray:
+    """
+    Creates an alpha mask for the complete inscribed circle (radius ~0.44 * size).
+    Used for measuring slot contrast/std to detect empty slots.
+    """
+    mask = np.zeros((size, size), dtype=np.uint8)
+    cv2.circle(mask, (size // 2, size // 2), int(size * 0.44), 255, -1)
+    return mask
+
+
 class TemplateMatchClassifier:
     """
-    Classifies cropped portrait icons by normalized template matching against reference thumbnails.
+    Classifies cropped portrait icons by normalized template matching against reference thumbnails,
+    using circular geometric and occlusion masks to reject colored backgrounds and HUD elements.
     """
 
     def __init__(
@@ -230,12 +258,18 @@ class TemplateMatchClassifier:
         empty_slot_path: Path | str | None = None,
         *,
         target_size: int = 64,
-        empty_threshold: float = 0.36,
+        empty_threshold: float = 0.45,
+        min_contrast: float = 18.0,
+        zoom_crop: float = 0.04,
     ) -> None:
         self.portraits_dir = Path(portraits_dir)
         self.empty_slot_path = Path(empty_slot_path) if empty_slot_path else None
         self.target_size = target_size
         self.empty_threshold = empty_threshold
+        self.min_contrast = min_contrast
+        self.zoom_crop = zoom_crop
+        self._mask = make_portrait_mask(target_size)
+        self._circle_mask = make_circle_mask(target_size)
         self._templates: dict[int, np.ndarray] = {}
         self._load_templates()
 
@@ -252,7 +286,11 @@ class TemplateMatchClassifier:
             img = cv2.imread(str(p))
             if img is not None:
                 h, w = img.shape[:2]
-                cropped = img[int(h * 0.16) : int(h * 0.80), int(w * 0.18) : int(w * 0.82)]
+                if self.zoom_crop > 0:
+                    dh, dw = int(h * self.zoom_crop), int(w * self.zoom_crop)
+                    cropped = img[dh : max(dh + 1, h - dh), dw : max(dw + 1, w - dw)]
+                else:
+                    cropped = img
                 if cropped.size > 0:
                     resized = cv2.resize(cropped, (self.target_size, self.target_size))
                     self._templates[enemy_id] = resized
@@ -266,11 +304,27 @@ class TemplateMatchClassifier:
     def classify(self, image: np.ndarray) -> Classification:
         if not self._templates or image is None or image.size == 0:
             return Classification(enemy_id=0, confidence=0.0)
+
+        if len(image.shape) == 2:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        elif image.shape[2] == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+
         target = cv2.resize(image, (self.target_size, self.target_size))
+
+        # Fast empty-slot rejection: empty circular slots have low pixel variance (std < 18),
+        # whereas actual enemy portraits have rich textures (std >= 27).
+        if self.min_contrast > 0:
+            circle_pixels = target[self._circle_mask > 0]
+            if circle_pixels.size > 0:
+                contrast = float(np.std(circle_pixels))
+                if contrast < self.min_contrast:
+                    return Classification(enemy_id=0, confidence=1.0)
+
         best_id = 0
         best_score = -1.0
         for enemy_id, tmpl in self._templates.items():
-            res = cv2.matchTemplate(target, tmpl, cv2.TM_CCOEFF_NORMED)
+            res = cv2.matchTemplate(target, tmpl, cv2.TM_CCOEFF_NORMED, mask=self._mask)
             score = float(res.max())
             if score > best_score:
                 best_score = score
