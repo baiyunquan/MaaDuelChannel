@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from maa_duel.schema import RosterEntry, RoundSample
+from maa_duel.vision.layout import get_expected_unit_count
 
 if TYPE_CHECKING:
     from maa_duel.gui.enemy_palette import EnemyPalette
@@ -176,14 +177,15 @@ class SlotWidget(QFrame):
             )
             return
 
-        text = f"{self.drawn_count}/{self.count}"
-        if self.drawn_count == self.count:
+        expected = get_expected_unit_count(self.enemy_id, self.count)
+        text = f"{self.drawn_count}/{expected}"
+        if self.drawn_count == expected:
             self.quota_label.setText(f"[OK] {text}")
             self.quota_label.setStyleSheet(
                 "background-color: #1b4d24; color: #55ff77; font-weight: bold; "
                 "border-radius: 3px; font-size: 11px; padding: 2px 4px;"
             )
-        elif self.drawn_count < self.count:
+        elif self.drawn_count < expected:
             self.quota_label.setText(f"[待补] {text}")
             self.quota_label.setStyleSheet(
                 "background-color: #553e10; color: #ffbb33; "

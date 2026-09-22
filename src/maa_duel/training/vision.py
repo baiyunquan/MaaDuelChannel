@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -118,20 +119,43 @@ class YoloBattlefieldDetector:
         self.half = half and device != "cpu"
         self.batch_size = batch_size
 
-    def detect(self, image: np.ndarray) -> list[RawDetection]:
-        return self.detect_batch([image])[0]
+    def detect(
+        self,
+        image: np.ndarray,
+        *,
+        candidate_enemy_ids: Iterable[int] | None = None,
+    ) -> list[RawDetection]:
+        return self.detect_batch([image], candidate_enemy_ids=candidate_enemy_ids)[0]
 
-    def detect_batch(self, images: list[np.ndarray]) -> list[list[RawDetection]]:
+    def detect_batch(
+        self,
+        images: list[np.ndarray],
+        *,
+        candidate_enemy_ids: Iterable[int] | None = None,
+    ) -> list[list[RawDetection]]:
         if not images:
             return []
-        results = self.model.predict(
-            source=images,
-            conf=self.confidence,
-            device=self.device,
-            half=self.half,
-            batch=self.batch_size,
-            verbose=False,
-        )
+
+        classes_filter: list[int] | None = None
+        if candidate_enemy_ids is not None:
+            classes_filter = [
+                idx for idx, eid in self.class_map.items() if eid in candidate_enemy_ids
+            ]
+            if not classes_filter:
+                return [[] for _ in images]
+
+        kwargs: dict[str, Any] = {
+            "source": images,
+            "conf": self.confidence,
+            "device": self.device,
+            "half": self.half,
+            "batch": self.batch_size,
+            "verbose": False,
+        }
+        if classes_filter is not None:
+            kwargs["classes"] = classes_filter
+
+        results = self.model.predict(**kwargs)
         return [detections_from_result(result, self.class_map) for result in results]
 
 

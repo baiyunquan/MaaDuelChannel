@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -33,7 +34,12 @@ class RosterRecognizer(Protocol):
 
 
 class BattlefieldDetector(Protocol):
-    def detect(self, frame: np.ndarray) -> list[RawDetection]: ...
+    def detect(
+        self,
+        frame: np.ndarray,
+        *,
+        candidate_enemy_ids: Iterable[int] | None = None,
+    ) -> list[RawDetection]: ...
 
 
 class HealthDetector(Protocol):
@@ -186,9 +192,21 @@ class VideoExtractor:
         else:
             observations = [item for frame in prep_frames for item in self.roster_recognizer.recognize(frame)]
         rosters = fuse_roster_observations(observations)
+        candidate_enemy_ids = {
+            entry.enemy_id
+            for side_roster in rosters.values()
+            for entry in side_roster
+            if entry.enemy_id > 0
+        }
 
         layout_frame = self._read_frame(video_path, window.layout_time)
-        detections = self.battlefield_detector.detect(layout_frame)
+        try:
+            detections = self.battlefield_detector.detect(
+                layout_frame,
+                candidate_enemy_ids=candidate_enemy_ids or None,
+            )
+        except TypeError:
+            detections = self.battlefield_detector.detect(layout_frame)
 
         tracker = WinnerTracker(stable_frames=self.stable_winner_frames)
         winner: Winner | None = None
