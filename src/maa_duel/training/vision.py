@@ -227,6 +227,7 @@ def train_vision_model(
         image_size = 128 if task in {"roster", "ocr"} else 640
 
     if batch == -1 or batch <= 0:
+        batch = 64 if task in {"roster", "ocr"} else 16
         batch = 128 if task in {"roster", "ocr"} else 32
 
     workers = min(workers, 4)

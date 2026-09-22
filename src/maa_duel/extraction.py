@@ -399,15 +399,29 @@ def extract_rounds(
         scan_fps=fps,
         stable_winner_frames=config.stable_winner_frames,
     )
+    rounds_manifest = config.manifest_dir / "rounds.auto.jsonl"
     samples: list[RoundSample] = []
+    already_extracted_videos: set[str] = set()
+    if rounds_manifest.is_file():
+        try:
+            samples = read_jsonl(rounds_manifest, RoundSample)
+            already_extracted_videos = {item.source.video_relpath for item in samples}
+        except Exception:
+            samples = []
+
     errors: list[dict[str, str]] = []
     gv_records = [record for record in records if record.arena is Arena.GREEN_VINE]
     gv_records.sort(key=lambda item: (item.duration > 300, item.duration, item.relative_path.casefold()))
     if max_videos is not None:
         gv_records = gv_records[:max_videos]
 
-    typer.echo(f"Extracting {len(gv_records)} Green Vine videos at {fps:.1f} fps...")
+    typer.echo(
+        f"Extracting {len(gv_records)} Green Vine videos at {fps:.1f} fps "
+        f"(already completed: {len(already_extracted_videos)})..."
+    )
     for index, record in enumerate(gv_records, start=1):
+        if record.relative_path in already_extracted_videos:
+            continue
         path = input_dir / Path(record.relative_path)
         source = SourceRef(video_relpath=record.relative_path, video_sha256=record.sha256)
         typer.echo(f"[{index}/{len(gv_records)}] {record.relative_path} ({record.duration:.1f}s)...")
