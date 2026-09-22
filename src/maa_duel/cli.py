@@ -182,10 +182,18 @@ def extract(
 @app.command()
 def review(
     workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
-    port: Annotated[int, typer.Option(help="Local review web server port.")] = 7860,
+    video_dir: Annotated[
+        Path | None,
+        typer.Option(help="Directory containing source raw videos for timeline adjustment."),
+    ] = None,
+    port: Annotated[int, typer.Option(help="Local review web server port (if using --web).")] = 7860,
     platform: Annotated[
         bool,
         typer.Option("--platform", help="Export Ultralytics Platform packages instead of local offline review."),
+    ] = False,
+    web: Annotated[
+        bool,
+        typer.Option("--web", help="Use legacy Gradio web interface instead of PyQt6 desktop app."),
     ] = False,
 ) -> None:
     if platform:
@@ -195,10 +203,14 @@ def review(
         typer.echo(f"Platform export: {exported.directory}")
         for task, archive in exported.archives.items():
             typer.echo(f"  {task.value}: {archive} ({exported.item_counts[task]} items)")
-    else:
+    elif web:
         from maa_duel.review import launch_local_review
 
         launch_local_review(workspace, port=port)
+    else:
+        from maa_duel.review import launch_local_review_qt
+
+        launch_local_review_qt(workspace, video_dir=video_dir)
 
 
 @annotate_app.command("export")

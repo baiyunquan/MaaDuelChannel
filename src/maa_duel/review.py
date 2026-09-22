@@ -341,3 +341,11 @@ def launch_review(workspace: Path):
     exported = export_platform_annotations(workspace)
     webbrowser.open(PLATFORM_URL)
     return exported
+
+
+def launch_local_review_qt(workspace: Path, video_dir: Path | None = None) -> None:
+    """Launch desktop PyQt6 review application."""
+    from maa_duel.gui import launch_local_review_qt as _launch_qt
+
+    _launch_qt(workspace, video_dir=video_dir)
+
