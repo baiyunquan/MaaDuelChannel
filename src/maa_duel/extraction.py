@@ -386,6 +386,7 @@ def extract_rounds(
             portrait_classifier,
             ocr,
             count_classifier=count_classifier,
+            default_count=1,
         ),
         battlefield_detector=YoloBattlefieldDetector(
             battlefield_model,

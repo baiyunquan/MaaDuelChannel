@@ -82,11 +82,11 @@ def calculate_safe_zone(width: int, height: int) -> tuple[int, int, int, int]:
     return offset_x, offset_y, safe_width, safe_height
 
 
-def default_slot_specs(image_shape: tuple[int, int] | None = None) -> list[SlotSpec]:
+def default_slot_specs(image_shape: tuple[int, ...] | None = None) -> list[SlotSpec]:
     """
     Returns the 6 nominal SlotSpecs mapped into the 16:9 safe zone for the given image shape.
     """
-    height, width = image_shape if image_shape is not None else (1080, 1920)
+    height, width = image_shape[:2] if image_shape is not None else (1080, 1920)
     offset_x, offset_y, safe_width, safe_height = calculate_safe_zone(width, height)
     r = safe_height * 0.050
     cy = offset_y + safe_height * 0.8944
@@ -299,11 +299,13 @@ class DualEngineClassifier:
         *,
         agreement_boost: float = 0.95,
         veto_confidence: float = 0.15,
+        template_veto_threshold: float = 0.65,
     ) -> None:
         self.yolo = yolo_classifier
         self.template = template_classifier
         self.agreement_boost = agreement_boost
         self.veto_confidence = veto_confidence
+        self.template_veto_threshold = template_veto_threshold
 
     def classify(self, image: np.ndarray) -> Classification:
         return self.classify_batch([image])[0]
@@ -320,9 +322,11 @@ class DualEngineClassifier:
             if yolo_res.enemy_id == tmpl_res.enemy_id:
                 conf = max(yolo_res.confidence, tmpl_res.confidence, self.agreement_boost)
                 merged.append(Classification(enemy_id=yolo_res.enemy_id, confidence=round(min(conf, 1.0), 4)))
-            else:
+            elif tmpl_res.confidence >= self.template_veto_threshold:
                 conf = min(self.veto_confidence, yolo_res.confidence, tmpl_res.confidence)
                 merged.append(Classification(enemy_id=yolo_res.enemy_id, confidence=round(max(0.05, conf), 4)))
+            else:
+                merged.append(Classification(enemy_id=yolo_res.enemy_id, confidence=round(yolo_res.confidence, 4)))
         return merged
 
 
@@ -346,6 +350,7 @@ class RosterFrameRecognizer:
         count_classifier: CountClassifier | None = None,
         minimum_type_confidence: float = 0.25,
         minimum_count_confidence: float = 0.25,
+        default_count: int | None = None,
     ) -> None:
         self.classifier = classifier
         self.ocr = ocr
@@ -353,6 +358,7 @@ class RosterFrameRecognizer:
         self.count_classifier = count_classifier
         self.minimum_type_confidence = minimum_type_confidence
         self.minimum_count_confidence = minimum_count_confidence
+        self.default_count = default_count
 
     @property
     def slots(self) -> list[SlotSpec]:
@@ -418,24 +424,32 @@ class RosterFrameRecognizer:
                     key=lambda item: item.confidence,
                     reverse=True,
                 )
+                detected_count: int | None = None
+                detected_count_conf: float = 0.0
                 for candidate in candidates:
                     if candidate.confidence < self.minimum_count_confidence:
                         continue
                     try:
-                        count = parse_count(candidate.text)
+                        detected_count = parse_count(candidate.text)
+                        detected_count_conf = candidate.confidence
+                        break
                     except ValueError:
                         continue
-                    observations.append(
-                        RosterObservation(
-                            side=slot.side,
-                            slot=slot.index,
-                            enemy_id=classification.enemy_id,
-                            count=count,
-                            type_confidence=classification.confidence,
-                            count_confidence=candidate.confidence,
-                        )
+                if detected_count is None and self.default_count is not None:
+                    detected_count = self.default_count
+                    detected_count_conf = 0.0
+                if detected_count is None:
+                    continue
+                observations.append(
+                    RosterObservation(
+                        side=slot.side,
+                        slot=slot.index,
+                        enemy_id=classification.enemy_id,
+                        count=max(1, detected_count),
+                        type_confidence=classification.confidence,
+                        count_confidence=detected_count_conf,
                     )
-                    break
+                )
             output.append(observations)
         return output
 
@@ -455,13 +469,16 @@ def fuse_roster_observations(
         count_votes: dict[int, float] = defaultdict(float)
         for value in values:
             type_votes[value.enemy_id] += value.type_confidence
-            count_votes[value.count] += value.count_confidence
+            count_weight = max(0.5, value.count_confidence)
+            count_votes[value.count] += count_weight
         enemy_id = max(type_votes, key=type_votes.get)
         count = max(count_votes, key=count_votes.get)
-        type_agreement = type_votes[enemy_id] / sum(type_votes.values())
-        count_agreement = count_votes[count] / sum(count_votes.values())
+        total_type = sum(type_votes.values())
+        total_count = sum(count_votes.values())
+        type_agreement = type_votes[enemy_id] / total_type if total_type > 0 else 1.0
+        count_agreement = count_votes[count] / total_count if total_count > 0 else 1.0
         selected_type_confidences = [value.type_confidence for value in values if value.enemy_id == enemy_id]
-        selected_count_confidences = [value.count_confidence for value in values if value.count == count]
+        selected_count_confidences = [max(0.5, value.count_confidence) for value in values if value.count == count]
         confidence = min(
             type_agreement,
             count_agreement,

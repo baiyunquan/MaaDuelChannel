@@ -135,13 +135,20 @@ class RapidOcrEngine:
                 "Cls.engine_cfg.use_cuda": False,
                 "Rec.engine_cfg.use_cuda": True,
             }
+        self._RapidOCR = RapidOCR
         try:
             self._engine = RapidOCR(params=params)
+            if use_cuda:
+                self._engine(np.zeros((32, 32, 3), dtype=np.uint8), use_det=False, use_cls=False, use_rec=True)
         except Exception:
             self._engine = RapidOCR()
 
     def recognize(self, image: np.ndarray, *, detect: bool = True) -> list[OcrText]:
-        result = self._engine(image, use_det=detect, use_cls=False, use_rec=True)
+        try:
+            result = self._engine(image, use_det=detect, use_cls=False, use_rec=True)
+        except Exception:
+            self._engine = self._RapidOCR()
+            result = self._engine(image, use_det=detect, use_cls=False, use_rec=True)
         texts = [] if result.txts is None else list(result.txts)
         scores = [] if result.scores is None else list(result.scores)
         boxes = ([] if result.boxes is None else list(result.boxes)) if detect else [None] * len(texts)
