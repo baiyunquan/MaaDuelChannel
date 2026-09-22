@@ -50,4 +50,7 @@ def test_review_command_exposes_video_dir_and_web_options():
     assert "--video-dir" in result.stdout
     assert "--web" in result.stdout
     assert "--platform" in result.stdout
+    assert "--skip-prep-roster" in result.stdout
+    assert "--only-prep-roster" in result.stdout
+
 

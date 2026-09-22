@@ -195,6 +195,20 @@ def review(
         bool,
         typer.Option("--web", help="Use legacy Gradio web interface instead of PyQt6 desktop app."),
     ] = False,
+    skip_prep_roster: Annotated[
+        bool,
+        typer.Option(
+            "--skip-prep-roster",
+            help="Skip batch prep roster review and directly open single-round workbench.",
+        ),
+    ] = False,
+    only_prep_roster: Annotated[
+        bool,
+        typer.Option(
+            "--only-prep-roster",
+            help="Only run batch prep roster review without entering single-round workbench.",
+        ),
+    ] = False,
 ) -> None:
     if platform:
         from maa_duel.review import launch_review
@@ -210,7 +224,12 @@ def review(
     else:
         from maa_duel.review import launch_local_review_qt
 
-        launch_local_review_qt(workspace, video_dir=video_dir)
+        launch_local_review_qt(
+            workspace,
+            video_dir=video_dir,
+            skip_prep_roster=skip_prep_roster,
+            only_prep_roster=only_prep_roster,
+        )
 
 
 @annotate_app.command("export")

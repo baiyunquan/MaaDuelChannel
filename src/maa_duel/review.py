@@ -343,9 +343,20 @@ def launch_review(workspace: Path):
     return exported
 
 
-def launch_local_review_qt(workspace: Path, video_dir: Path | None = None) -> None:
-    """Launch desktop PyQt6 review application."""
+def launch_local_review_qt(
+    workspace: Path,
+    video_dir: Path | None = None,
+    skip_prep_roster: bool = False,
+    only_prep_roster: bool = False,
+) -> None:
+    """Launch desktop PyQt6 review application with optional two-stage flow."""
     from maa_duel.gui import launch_local_review_qt as _launch_qt
 
-    _launch_qt(workspace, video_dir=video_dir)
+    _launch_qt(
+        workspace,
+        video_dir=video_dir,
+        skip_prep_roster=skip_prep_roster,
+        only_prep_roster=only_prep_roster,
+    )
+
 
