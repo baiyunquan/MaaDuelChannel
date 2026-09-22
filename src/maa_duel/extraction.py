@@ -301,7 +301,7 @@ def extract_rounds(
     from maa_duel.vision.health import HealthBarDetector
     from maa_duel.vision.ocr import RapidOcrEngine
     from maa_duel.vision.phase_analyzer import OcrPhaseAnalyzer
-    from maa_duel.vision.roster import RosterFrameRecognizer
+    from maa_duel.vision.roster import DualEngineClassifier, RosterFrameRecognizer, TemplateMatchClassifier
 
     roster_model = workspace / "models" / "vision" / "roster" / "weights" / "best.pt"
     battlefield_model = workspace / "models" / "vision" / "battlefield" / "weights" / "best.pt"
@@ -315,8 +315,8 @@ def extract_rounds(
         battlefield_class_map = workspace / "synthetic" / "battlefield" / "class-map.json"
     required = (
         ("roster model", roster_model),
-        ("battlefield model", battlefield_model),
         ("roster class map", roster_class_map),
+        ("battlefield model", battlefield_model),
         ("battlefield class map", battlefield_class_map),
     )
     for label, path in required:
@@ -343,17 +343,29 @@ def extract_rounds(
         if ocr_model.is_file() and ocr_class_map.is_file()
         else None
     )
+    yolo_portrait_classifier = YoloPortraitClassifier(
+        roster_model,
+        roster_class_map,
+        device=device,
+        half=half,
+        batch_size=batch_size,
+    )
+    portraits_dir = workspace / "assets" / "portraits"
+    empty_slot_path = workspace / "assets" / "ui" / "empty_slot.png"
+    if portraits_dir.is_dir():
+        template_classifier = TemplateMatchClassifier(
+            portraits_dir,
+            empty_slot_path=empty_slot_path if empty_slot_path.is_file() else None,
+        )
+        portrait_classifier = DualEngineClassifier(yolo_portrait_classifier, template_classifier)
+    else:
+        portrait_classifier = yolo_portrait_classifier
+
     fps = scan_fps if scan_fps is not None else config.sample_fps
     extractor = VideoExtractor(
         phase_analyzer=OcrPhaseAnalyzer(ocr),
         roster_recognizer=RosterFrameRecognizer(
-            YoloPortraitClassifier(
-                roster_model,
-                roster_class_map,
-                device=device,
-                half=half,
-                batch_size=batch_size,
-            ),
+            portrait_classifier,
             ocr,
             count_classifier=count_classifier,
         ),

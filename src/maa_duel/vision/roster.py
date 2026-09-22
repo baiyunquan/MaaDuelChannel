@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Protocol
 
+import cv2
 import numpy as np
 
 from maa_duel.schema import RosterEntry
@@ -60,22 +62,268 @@ def _rect_around(center_x: float, center_y: float, width: float, height: float) 
     )
 
 
-def default_slot_specs() -> list[SlotSpec]:
+def calculate_safe_zone(width: int, height: int) -> tuple[int, int, int, int]:
+    """
+    Returns (offset_x, offset_y, safe_width, safe_height) for a 16:9 safe area
+    centered inside an image of arbitrary aspect ratio (e.g. 16:9, 20:9, 4:3).
+    """
+    target_aspect = 16.0 / 9.0
+    aspect = width / max(1, height)
+    if aspect >= target_aspect:
+        safe_height = height
+        safe_width = round(height * target_aspect)
+        offset_x = (width - safe_width) // 2
+        offset_y = 0
+    else:
+        safe_width = width
+        safe_height = round(width / target_aspect)
+        offset_x = 0
+        offset_y = (height - safe_height) // 2
+    return offset_x, offset_y, safe_width, safe_height
+
+
+def default_slot_specs(image_shape: tuple[int, int] | None = None) -> list[SlotSpec]:
+    """
+    Returns the 6 nominal SlotSpecs mapped into the 16:9 safe zone for the given image shape.
+    """
+    height, width = image_shape if image_shape is not None else (1080, 1920)
+    offset_x, offset_y, safe_width, safe_height = calculate_safe_zone(width, height)
+    r = safe_height * 0.050
+    cy = offset_y + safe_height * 0.8944
     specs: list[SlotSpec] = []
     for side, centers in (
-        ("left", (0.400, 0.345, 0.290)),
-        ("right", (0.600, 0.655, 0.710)),
+        ("left", (0.4013, 0.3404, 0.2794)),
+        ("right", (0.5977, 0.6544, 0.7112)),
     ):
-        for index, center_x in enumerate(centers):
+        for index, center_x_rel in enumerate(centers):
+            cx = offset_x + safe_width * center_x_rel
+            icon_rect = (
+                max(0.0, (cx - r) / width),
+                max(0.0, (cy - r) / height),
+                min(1.0, (cx + r) / width),
+                min(1.0, (cy + r) / height),
+            )
+            count_rect = (
+                max(0.0, (cx + r * 0.25) / width),
+                max(0.0, cy / height),
+                min(1.0, (cx + r * 1.25) / width),
+                min(1.0, (cy + r * 0.95) / height),
+            )
             specs.append(
                 SlotSpec(
                     side=side,
                     index=index,
-                    icon_rect=_rect_around(center_x, 0.925, 0.070, 0.105),
-                    count_rect=(center_x + 0.015, 0.925, center_x + 0.055, 0.975),
+                    icon_rect=icon_rect,
+                    count_rect=count_rect,
                 )
             )
     return specs
+
+
+def detect_slot_specs(frame: np.ndarray) -> list[SlotSpec]:
+    """
+    Detects circular slots in the preparation frame using HoughCircles and rigid geometric fitting.
+    Falls back gracefully to default_slot_specs(frame.shape[:2]) if detection fails.
+    """
+    if frame is None or frame.size == 0 or len(frame.shape) < 2:
+        return default_slot_specs()
+    height, width = frame.shape[:2]
+    base_specs = default_slot_specs((height, width))
+    offset_x, offset_y, safe_width, safe_height = calculate_safe_zone(width, height)
+    expected_r = safe_height * 0.050
+
+    roi_top = max(0, offset_y + int(safe_height * 0.78))
+    roi_bottom = min(height, offset_y + int(safe_height * 0.98))
+    roi_left = max(0, offset_x + int(safe_width * 0.20))
+    roi_right = min(width, offset_x + int(safe_width * 0.80))
+    if roi_bottom <= roi_top or roi_right <= roi_left:
+        return base_specs
+
+    roi = frame[roi_top:roi_bottom, roi_left:roi_right]
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
+    min_r = max(8, int(expected_r * 0.70))
+    max_r = int(expected_r * 1.30)
+    circles = cv2.HoughCircles(
+        gray,
+        cv2.HOUGH_GRADIENT,
+        dp=1,
+        minDist=int(expected_r * 1.1),
+        param1=45,
+        param2=26,
+        minRadius=min_r,
+        maxRadius=max_r,
+    )
+
+    matched: dict[int, tuple[float, float, float]] = {}
+    if circles is not None:
+        for c in circles[0]:
+            cx = float(c[0] + roi_left)
+            cy = float(c[1] + roi_top)
+            r = float(c[2])
+            best_i, best_d = None, float("inf")
+            for i, spec in enumerate(base_specs):
+                nom_x = (spec.icon_rect[0] + spec.icon_rect[2]) * 0.5 * width
+                nom_y = (spec.icon_rect[1] + spec.icon_rect[3]) * 0.5 * height
+                dist = float(np.hypot(cx - nom_x, cy - nom_y))
+                if dist < expected_r * 0.65 and dist < best_d:
+                    best_d = dist
+                    best_i = i
+            if best_i is not None and best_i not in matched:
+                matched[best_i] = (cx, cy, r)
+
+    if not matched:
+        return base_specs
+
+    diffs_x = [
+        matched[i][0] - (base_specs[i].icon_rect[0] + base_specs[i].icon_rect[2]) * 0.5 * width
+        for i in matched
+    ]
+    diffs_y = [
+        matched[i][1] - (base_specs[i].icon_rect[1] + base_specs[i].icon_rect[3]) * 0.5 * height
+        for i in matched
+    ]
+    dx = float(np.median(diffs_x))
+    dy = float(np.median(diffs_y))
+
+    if abs(dx) > expected_r * 0.6 or abs(dy) > expected_r * 0.6:
+        return base_specs
+
+    final_specs: list[SlotSpec] = []
+    for i, spec in enumerate(base_specs):
+        if i in matched:
+            cx, cy, r = matched[i]
+        else:
+            nom_x = (spec.icon_rect[0] + spec.icon_rect[2]) * 0.5 * width
+            nom_y = (spec.icon_rect[1] + spec.icon_rect[3]) * 0.5 * height
+            cx, cy, r = nom_x + dx, nom_y + dy, expected_r
+        icon_rect = (
+            max(0.0, (cx - r) / width),
+            max(0.0, (cy - r) / height),
+            min(1.0, (cx + r) / width),
+            min(1.0, (cy + r) / height),
+        )
+        count_rect = (
+            max(0.0, (cx + r * 0.25) / width),
+            max(0.0, cy / height),
+            min(1.0, (cx + r * 1.25) / width),
+            min(1.0, (cy + r * 0.95) / height),
+        )
+        final_specs.append(
+            SlotSpec(
+                side=spec.side,
+                index=spec.index,
+                icon_rect=icon_rect,
+                count_rect=count_rect,
+            )
+        )
+    return final_specs
+
+
+class TemplateMatchClassifier:
+    """
+    Classifies cropped portrait icons by normalized template matching against reference thumbnails.
+    """
+
+    def __init__(
+        self,
+        portraits_dir: Path | str,
+        empty_slot_path: Path | str | None = None,
+        *,
+        target_size: int = 64,
+        empty_threshold: float = 0.36,
+    ) -> None:
+        self.portraits_dir = Path(portraits_dir)
+        self.empty_slot_path = Path(empty_slot_path) if empty_slot_path else None
+        self.target_size = target_size
+        self.empty_threshold = empty_threshold
+        self._templates: dict[int, np.ndarray] = {}
+        self._load_templates()
+
+    def _load_templates(self) -> None:
+        if not self.portraits_dir.is_dir():
+            return
+        for p in self.portraits_dir.glob("*/thumbnail.png"):
+            try:
+                enemy_id = int(p.parent.name)
+            except ValueError:
+                continue
+            if enemy_id <= 0:
+                continue
+            img = cv2.imread(str(p))
+            if img is not None:
+                h, w = img.shape[:2]
+                cropped = img[int(h * 0.16) : int(h * 0.80), int(w * 0.18) : int(w * 0.82)]
+                if cropped.size > 0:
+                    resized = cv2.resize(cropped, (self.target_size, self.target_size))
+                    self._templates[enemy_id] = resized
+
+        if self.empty_slot_path and self.empty_slot_path.is_file():
+            empty_img = cv2.imread(str(self.empty_slot_path))
+            if empty_img is not None:
+                resized = cv2.resize(empty_img, (self.target_size, self.target_size))
+                self._templates[0] = resized
+
+    def classify(self, image: np.ndarray) -> Classification:
+        if not self._templates or image is None or image.size == 0:
+            return Classification(enemy_id=0, confidence=0.0)
+        target = cv2.resize(image, (self.target_size, self.target_size))
+        best_id = 0
+        best_score = -1.0
+        for enemy_id, tmpl in self._templates.items():
+            res = cv2.matchTemplate(target, tmpl, cv2.TM_CCOEFF_NORMED)
+            score = float(res.max())
+            if score > best_score:
+                best_score = score
+                best_id = enemy_id
+
+        if best_id != 0 and best_score < self.empty_threshold:
+            return Classification(enemy_id=0, confidence=round(1.0 - max(0.0, best_score), 4))
+
+        return Classification(enemy_id=best_id, confidence=round(max(0.0, best_score), 4))
+
+    def classify_batch(self, images: list[np.ndarray]) -> list[Classification]:
+        return [self.classify(img) for img in images]
+
+
+class DualEngineClassifier:
+    """
+    Combines YOLO portrait classifier with OpenCV template matching.
+    Implements one-vote veto: when models agree, confidence is boosted;
+    when they disagree, confidence is penalized to trigger manual review.
+    """
+
+    def __init__(
+        self,
+        yolo_classifier: PortraitClassifier,
+        template_classifier: TemplateMatchClassifier,
+        *,
+        agreement_boost: float = 0.95,
+        veto_confidence: float = 0.15,
+    ) -> None:
+        self.yolo = yolo_classifier
+        self.template = template_classifier
+        self.agreement_boost = agreement_boost
+        self.veto_confidence = veto_confidence
+
+    def classify(self, image: np.ndarray) -> Classification:
+        return self.classify_batch([image])[0]
+
+    def classify_batch(self, images: list[np.ndarray]) -> list[Classification]:
+        if not images:
+            return []
+        yolo_batch = getattr(self.yolo, "classify_batch", None)
+        yolo_results = yolo_batch(images) if callable(yolo_batch) else [self.yolo.classify(img) for img in images]
+        tmpl_results = self.template.classify_batch(images)
+
+        merged: list[Classification] = []
+        for yolo_res, tmpl_res in zip(yolo_results, tmpl_results, strict=True):
+            if yolo_res.enemy_id == tmpl_res.enemy_id:
+                conf = max(yolo_res.confidence, tmpl_res.confidence, self.agreement_boost)
+                merged.append(Classification(enemy_id=yolo_res.enemy_id, confidence=round(min(conf, 1.0), 4)))
+            else:
+                conf = min(self.veto_confidence, yolo_res.confidence, tmpl_res.confidence)
+                merged.append(Classification(enemy_id=yolo_res.enemy_id, confidence=round(max(0.05, conf), 4)))
+        return merged
 
 
 def crop_normalized(frame: np.ndarray, rect: NormalizedRect) -> np.ndarray:
@@ -101,10 +349,14 @@ class RosterFrameRecognizer:
     ) -> None:
         self.classifier = classifier
         self.ocr = ocr
-        self.slots = slots or default_slot_specs()
+        self.fixed_slots = slots
         self.count_classifier = count_classifier
         self.minimum_type_confidence = minimum_type_confidence
         self.minimum_count_confidence = minimum_count_confidence
+
+    @property
+    def slots(self) -> list[SlotSpec]:
+        return self.fixed_slots if self.fixed_slots is not None else default_slot_specs()
 
     def recognize(self, frame: np.ndarray) -> list[RosterObservation]:
         return self.recognize_batch([frame])[0]
@@ -112,31 +364,43 @@ class RosterFrameRecognizer:
     def recognize_batch(self, frames: list[np.ndarray]) -> list[list[RosterObservation]]:
         if not frames:
             return []
-        icon_crops = [crop_normalized(frame, slot.icon_rect) for frame in frames for slot in self.slots]
+
+        frame_slots_list = [
+            self.fixed_slots if self.fixed_slots is not None else detect_slot_specs(frame)
+            for frame in frames
+        ]
+        icon_crops = [
+            crop_normalized(frame, slot.icon_rect)
+            for frame, slots in zip(frames, frame_slots_list, strict=True)
+            for slot in slots
+        ]
         classify_batch = getattr(self.classifier, "classify_batch", None)
         classifications = (
             classify_batch(icon_crops)
             if callable(classify_batch)
             else [self.classifier.classify(crop) for crop in icon_crops]
         )
+        count_crops = [
+            crop_normalized(frame, slot.count_rect)
+            for frame, slots in zip(frames, frame_slots_list, strict=True)
+            for slot in slots
+        ]
         count_classifications = (
-            self.count_classifier.classify_batch(
-                [crop_normalized(frame, slot.count_rect) for frame in frames for slot in self.slots]
-            )
+            self.count_classifier.classify_batch(count_crops)
             if self.count_classifier is not None
             else None
         )
         output: list[list[RosterObservation]] = []
         offset = 0
-        for frame in frames:
+        for frame, slots in zip(frames, frame_slots_list, strict=True):
             observations: list[RosterObservation] = []
-            frame_classifications = classifications[offset : offset + len(self.slots)]
-            offset += len(self.slots)
-            for slot_position, (slot, classification) in enumerate(zip(self.slots, frame_classifications, strict=True)):
+            frame_classifications = classifications[offset : offset + len(slots)]
+            offset += len(slots)
+            for slot_position, (slot, classification) in enumerate(zip(slots, frame_classifications, strict=True)):
                 if classification.enemy_id < 1 or classification.confidence < self.minimum_type_confidence:
                     continue
                 if count_classifications is not None:
-                    count_result = count_classifications[offset - len(self.slots) + slot_position]
+                    count_result = count_classifications[offset - len(slots) + slot_position]
                     if count_result.count is not None and count_result.confidence >= self.minimum_count_confidence:
                         observations.append(
                             RosterObservation(

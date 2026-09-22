@@ -36,7 +36,7 @@ from maa_duel.schema import (
     UnitDetection,
 )
 from maa_duel.store import read_jsonl, write_jsonl
-from maa_duel.vision.roster import crop_normalized, default_slot_specs
+from maa_duel.vision.roster import crop_normalized, default_slot_specs, detect_slot_specs
 
 PLATFORM_URL = "https://platform.ultralytics.com/"
 
@@ -134,7 +134,8 @@ def export_platform_annotations(workspace: Path, *, export_id: str | None = None
             prep_path = workspace / sample.evidence.prep
             prep = _read_image(prep_path)
             rosters = {"left": sample.left.roster, "right": sample.right.roster}
-            for slot in default_slot_specs():
+            slots = detect_slot_specs(prep) if prep is not None else default_slot_specs()
+            for slot in slots:
                 roster_entry = rosters[slot.side][slot.index] if slot.index < len(rosters[slot.side]) else None
                 roster_class = _enemy_class(roster_entry.enemy_id) if roster_entry else "empty"
                 count_class = f"count_{roster_entry.count}" if roster_entry else "empty"

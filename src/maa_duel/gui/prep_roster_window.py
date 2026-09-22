@@ -28,7 +28,7 @@ from maa_duel.gui.enemy_palette import EnemyPalette
 from maa_duel.review import ReviewCorrection, ReviewStore
 from maa_duel.schema import RosterEntry, RoundSample
 from maa_duel.store import read_jsonl
-from maa_duel.vision.roster import crop_normalized, default_slot_specs
+from maa_duel.vision.roster import crop_normalized, default_slot_specs, detect_slot_specs
 
 if TYPE_CHECKING:
     pass
@@ -535,7 +535,8 @@ class PrepRosterReviewWindow(QMainWindow):
             return None
 
         # Crop all 6 slots for this sample and cache
-        for spec in self.slot_specs:
+        specs = detect_slot_specs(frame)
+        for spec in specs:
             crop_bgr = crop_normalized(frame, spec.icon_rect)
             rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb.shape
