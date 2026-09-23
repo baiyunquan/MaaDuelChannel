@@ -127,6 +127,38 @@ def test_cuda_ocr_rejects_cpu_recognition_session(monkeypatch):
         ocr_module.RapidOcrEngine(use_cuda=True)
 
 
+def test_cuda_ocr_arena_can_cover_large_video_recognition_batches(monkeypatch):
+    from types import SimpleNamespace
+
+    import rapidocr
+
+    from maa_duel.vision import ocr as ocr_module
+
+    captured_params = {}
+
+    class Session:
+        def get_providers(self) -> list[str]:
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    class FakeRapidOCR:
+        def __init__(self, params=None) -> None:
+            captured_params.update(params)
+            component = SimpleNamespace(session=SimpleNamespace(session=Session()))
+            self.text_det = component
+            self.text_rec = component
+            self.text_cls = component
+
+        def __call__(self, *args, **kwargs):
+            return SimpleNamespace(txts=None, scores=None, boxes=None)
+
+    monkeypatch.setattr(ocr_module, "_prepare_cuda_runtime", lambda: None)
+    monkeypatch.setattr(rapidocr, "RapidOCR", FakeRapidOCR)
+
+    ocr_module.RapidOcrEngine(use_cuda=True)
+
+    assert captured_params["EngineConfig.onnxruntime.cuda_ep_cfg.gpu_mem_limit"] >= 4 * 1024**3
+
+
 def test_preprocess_count_crop() -> None:
     import cv2
     import numpy as np

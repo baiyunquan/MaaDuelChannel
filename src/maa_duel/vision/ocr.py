@@ -245,7 +245,7 @@ class RapidOcrEngine:
                 "EngineConfig.onnxruntime.use_cuda": True,
                 "EngineConfig.onnxruntime.intra_op_num_threads": 1,
                 "EngineConfig.onnxruntime.inter_op_num_threads": 1,
-                "EngineConfig.onnxruntime.cuda_ep_cfg.gpu_mem_limit": 536870912,
+                "EngineConfig.onnxruntime.cuda_ep_cfg.gpu_mem_limit": 4 * 1024**3,
                 "EngineConfig.onnxruntime.cuda_ep_cfg.arena_extend_strategy": "kSameAsRequested",
                 "EngineConfig.onnxruntime.cuda_ep_cfg.cudnn_conv_algo_search": "HEURISTIC",
                 "EngineConfig.onnxruntime.cuda_ep_cfg.cudnn_conv_use_max_workspace": False,
@@ -297,7 +297,9 @@ class RapidOcrEngine:
             result = self._engine(image, use_det=detect, use_cls=False, use_rec=True)
         except Exception as exc:
             if getattr(self, "_use_cuda", False):
-                raise RuntimeError("RapidOCR CUDA inference failed; refusing a silent CPU fallback") from exc
+                raise RuntimeError(
+                    f"RapidOCR CUDA inference failed; refusing a silent CPU fallback: {exc}"
+                ) from exc
             raise RuntimeError("RapidOCR CPU inference failed") from exc
         texts = [] if result.txts is None else list(result.txts)
         scores = [] if result.scores is None else list(result.scores)
