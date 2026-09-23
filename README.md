@@ -43,8 +43,8 @@ D:\MAA-DuelChannel\
 └── workspace\
     ├── assets\             # 可追溯的头像、动画和背景
     ├── synthetic\          # YOLO 合成训练集
-    ├── manifests\          # 视频、自动识别和 Predictor JSONL
-    ├── frames\             # 准备、站位和胜负证据帧
+    ├── manifests\          # 视频、活动提取指针和 Predictor JSONL
+    ├── extraction-runs\    # 不可变提取版本、证据帧和阶段诊断
     ├── review\platform\    # Platform 上传包、裁剪图和本地映射
     ├── annotations\        # Platform 回导的不可变标注版本
     ├── datasets\           # Hard/Replay/Base 采样后的训练版本
@@ -154,16 +154,26 @@ uv run duel train-vision battlefield --workspace D:\MAA-DuelChannel\workspace --
 uv run duel extract --input-dir D:\MAA-DuelChannel\training-data --workspace D:\MAA-DuelChannel\workspace --device 0 --half --batch-size 32
 ~~~
 
-提取器以低帧率扫描时间线，再只在证据时间点运行昂贵模型：
+`--scan-fps` 只控制阶段发现的粗扫帧率；证据选择始终按视频原始帧率顺序细扫。提取器使用多信号阶段状态机：
 
-1. OCR 找到倒计时和 ROUND XXX。
-2. 连续准备帧投票得到双方类型与数量。
-3. 选择倒计时消失到 ROUND 遮罩出现之间最清晰的站位帧。
-4. YOLO 检测结果按双方和 (enemy_id, count) 严格核对。
-5. 连续追踪橙色与蓝色血条，稳定消失的一方判负。
-6. 高置信且完全一致的样本自动 accepted；其余样本进入 pending。
+1. 10 FPS 粗扫地图、底栏、成对选择按钮、倒计时、ROUND 和四角状态，生成连续候选局。
+2. 在候选边界按源 FPS 选择准备帧、倒计时与 ROUND 之间的站位帧，以及 ROUND 和角落遮罩消失后的战斗起点。
+3. 结束证据只能来自下一阶段边界前、中央没有倒计时或 ROUND 的最后合法战场段。
+4. YOLO 检测结果按双方和 `(enemy_id, count)` 严格核对；最后 5 个合法结束帧至少 3 帧一致且无反证才确定胜者。
+5. 找不到合法站位或结束证据时记录固定的 `unresolved` 原因，绝不回退到倒计时帧或下一局。
+6. 高置信且完全一致的样本自动 accepted；胜者未决的合法样本进入 pending。
 
-自动结果写入 manifests\rounds.auto.jsonl。不完整窗口和单局识别错误写入 reports\extraction-errors.json，同视频中已经成功提取的局仍会保留。重复提取可以覆盖自动结果，不会覆盖 review\corrections.jsonl 中的人工修正。
+每次提取先写入 run-scoped staging，成功后通过 `manifests\extraction.active.json` 一次切换到新的
+`extraction-runs\<run-id>`；旧 run 保留不动。该目录内包含自动清单、corrections、证据图、
+`extraction-errors.json` 和 `phase-diagnostics.json`。未解决候选会自动生成联系表；`--phase-debug` 会为所有候选生成联系表。
+
+完整重建并清空本轮审核状态使用：
+
+~~~powershell
+uv run duel extract --input-dir D:\MAA-DuelChannel\training-data --workspace D:\MAA-DuelChannel\workspace --device 0 --force --reset-review
+~~~
+
+`--reset-review` 必须与 `--force` 同用，且不能搭配 `--max-videos`。旧自动清单、证据和人工 corrections 仍保存在旧 run；所有审核、导出、数据集与报告命令只读取 active run，避免重新编号后套用孤儿修正。
 
 ### 5. 在 Ultralytics Platform 人工审核
 

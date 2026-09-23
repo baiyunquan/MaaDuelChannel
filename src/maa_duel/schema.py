@@ -45,6 +45,7 @@ class RosterEntry(BaseModel):
     enemy_id: int = Field(ge=1)
     count: int = Field(ge=1)
     confidence: float = Field(ge=0.0, le=1.0)
+    slot: int | None = Field(default=None, ge=0, le=2)
 
 
 class UnitDetection(BaseModel):

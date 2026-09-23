@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from maa_duel.extraction_state import active_extraction_paths
 from maa_duel.gui.canvas import AnnotationBoxItem, AnnotationCanvas, CanvasMode
 from maa_duel.gui.enemy_palette import EnemyPalette
 from maa_duel.gui.guide_dialog import InstructionGuideDialog
@@ -45,11 +46,12 @@ class ReviewerMainWindow(QMainWindow):
         super().__init__(parent)
         self.workspace = workspace
         self.video_dir = video_dir
+        self.extraction_paths = active_extraction_paths(self.workspace)
 
         self.setWindowTitle("MaaDuelChannel 本地审核与标注工作台")
         self.resize(1600, 950)
 
-        self.store = ReviewStore(self.workspace / "review" / "corrections.jsonl")
+        self.store = ReviewStore(self.extraction_paths.corrections)
         self.samples: list[RoundSample] = []
         self.filtered_indices: list[int] = []
         self.current_idx_in_filtered: int = 0
@@ -343,9 +345,9 @@ class ReviewerMainWindow(QMainWindow):
         self.guide_dialog.activateWindow()
 
     def load_dataset(self) -> None:
-        manifest_path = self.workspace / "manifests" / "rounds.auto.jsonl"
+        manifest_path = self.extraction_paths.rounds_manifest
         if not manifest_path.exists():
-            QMessageBox.critical(self, "错误", f"未找到 manifests/rounds.auto.jsonl: {manifest_path}")
+            QMessageBox.critical(self, "错误", f"未找到自动提取清单: {manifest_path}")
             return
 
         automatic = read_jsonl(manifest_path, RoundSample)

@@ -181,6 +181,7 @@ def test_prep_roster_review_window(qapp, mock_prep_workspace):
     saved_sample = corrections["b" * 32].sample
     # Left roster should now have enemy 1
     assert saved_sample.left.roster[0].enemy_id == 1
+    assert saved_sample.left.roster[0].slot == 0
 
     # Test proceed
     window.save_and_proceed()

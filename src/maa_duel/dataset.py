@@ -16,6 +16,7 @@ from maa_duel.calibration import (
 )
 from maa_duel.combat import DERIVED_FORMULA_VERSION, load_combat_knowledge
 from maa_duel.contracts import DatasetVersion, git_commit, sha256_file, write_contract
+from maa_duel.extraction_state import active_extraction_paths
 from maa_duel.review import ReviewStore
 from maa_duel.schema import ReviewStatus, RoundSample, Winner
 from maa_duel.store import read_jsonl, write_jsonl
@@ -129,7 +130,8 @@ def _load_video_calibration(workspace: Path, sample_ids: list[str]) -> tuple[Pat
 
 def build_predictor_dataset(workspace: Path) -> list[PredictorSample]:
     manifest_dir = workspace / "manifests"
-    source_manifest = manifest_dir / "rounds.auto.jsonl"
+    extraction = active_extraction_paths(workspace)
+    source_manifest = extraction.rounds_manifest
     if not source_manifest.is_file():
         raise FileNotFoundError(f"round manifest is missing; run extract first: {source_manifest}")
     automatic = read_jsonl(source_manifest, RoundSample)
@@ -137,7 +139,7 @@ def build_predictor_dataset(workspace: Path) -> list[PredictorSample]:
     if len(ids) != len(set(ids)):
         raise ValueError("automatic manifest contains duplicate sample ids")
 
-    effective = ReviewStore(workspace / "review" / "corrections.jsonl").overlay(automatic)
+    effective = ReviewStore(extraction.corrections).overlay(automatic)
     accepted = [sample for sample in effective if sample.review_status is ReviewStatus.ACCEPTED]
     if accepted:
         calibration_path, fitted, calibration_digest = _load_video_calibration(

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from maa_duel.assets import load_asset_manifest
+from maa_duel.extraction_state import active_extraction_paths
 from maa_duel.review import ReviewStore
 from maa_duel.schema import ReviewStatus, RoundSample, Winner
 from maa_duel.store import read_jsonl
@@ -20,9 +21,10 @@ def write_report(workspace: Path) -> Path:
     manifest_dir = workspace / "manifests"
     report_dir = workspace / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
+    extraction = active_extraction_paths(workspace)
     videos = read_jsonl(manifest_dir / "videos.jsonl", VideoRecord)
-    automatic = read_jsonl(manifest_dir / "rounds.auto.jsonl", RoundSample)
-    effective = ReviewStore(workspace / "review" / "corrections.jsonl").overlay(automatic)
+    automatic = read_jsonl(extraction.rounds_manifest, RoundSample)
+    effective = ReviewStore(extraction.corrections).overlay(automatic)
 
     video_summary: dict[str, dict[str, float | int]] = defaultdict(lambda: {"count": 0, "duration_seconds": 0.0})
     for video in videos:
@@ -35,7 +37,7 @@ def write_report(workspace: Path) -> Path:
     statuses = Counter(sample.review_status.value for sample in effective)
     winners = Counter(sample.winner.value for sample in effective if sample.winner is not None)
     predictor = _load_json(manifest_dir / "predictor.meta.json", {})
-    extraction_errors = _load_json(report_dir / "extraction-errors.json", [])
+    extraction_errors = _load_json(extraction.extraction_errors, [])
     asset_path = workspace / "assets" / "catalog.json"
     asset_summary: dict[str, int] = {}
     if asset_path.exists():

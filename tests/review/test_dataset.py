@@ -7,6 +7,7 @@ from maa_duel.calibration import BattlefieldCalibration, CalibrationPoint, save_
 from maa_duel.combat import CombatKnowledge, StageRules, save_combat_knowledge
 from maa_duel.contracts import DatasetVersion, sha256_file
 from maa_duel.dataset import BattleState, PredictorSample, build_predictor_dataset
+from maa_duel.extraction_state import ActiveExtraction
 from maa_duel.review import ReviewCorrection, ReviewStore
 from maa_duel.schema import ReviewStatus, Winner
 from maa_duel.store import read_jsonl, write_jsonl
@@ -63,6 +64,40 @@ def test_dataset_builder_uses_manual_overlay_and_only_accepted_samples(tmp_path)
     assert metadata["accepted_samples"] == 2
     assert metadata["written_samples"] == 2
     assert len(metadata["dataset_sha256"]) == 64
+
+
+def test_dataset_builder_uses_active_run_and_ignores_legacy_correction(tmp_path):
+    workspace = tmp_path / "workspace"
+    write_calibration(workspace)
+    sample_id = "f" * 32
+
+    legacy_auto = make_sample(sample_id, ReviewStatus.ACCEPTED)
+    legacy_auto.winner = Winner.LEFT
+    write_jsonl(workspace / "manifests" / "rounds.auto.jsonl", [legacy_auto])
+    legacy_corrected = make_sample(sample_id, ReviewStatus.ACCEPTED)
+    legacy_corrected.winner = Winner.LEFT
+    ReviewStore(workspace / "review" / "corrections.jsonl").save(
+        ReviewCorrection(sample=legacy_corrected, note="legacy correction must be ignored")
+    )
+
+    run_id = "20260923T120000000000Z-active02"
+    run_root = workspace / "extraction-runs" / run_id
+    active_auto = make_sample(sample_id, ReviewStatus.ACCEPTED)
+    active_auto.winner = Winner.RIGHT
+    write_jsonl(run_root / "manifests" / "rounds.auto.jsonl", [active_auto])
+    write_jsonl(run_root / "review" / "corrections.jsonl", [])
+    (workspace / "manifests" / "extraction.active.json").write_text(
+        ActiveExtraction(run_id=run_id).model_dump_json(),
+        encoding="utf-8",
+    )
+
+    result = build_predictor_dataset(workspace)
+    rows = read_jsonl(workspace / "manifests" / "predictor.jsonl", PredictorSample)
+
+    assert len(result) == 1
+    assert len(rows) == 1
+    assert result[0].sample_id == sample_id
+    assert rows[0].winner is Winner.RIGHT
 
 
 def test_dataset_contract_binds_combat_knowledge_version_and_hash(tmp_path):

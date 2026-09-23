@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from maa_duel.extraction_state import active_extraction_paths
 from maa_duel.gui.enemy_palette import EnemyPalette
 from maa_duel.review import ReviewCorrection, ReviewStore
 from maa_duel.schema import RosterEntry, RoundSample
@@ -238,11 +239,12 @@ class PrepRosterReviewWindow(QMainWindow):
         self.workspace = workspace
         self.video_dir = video_dir
         self.on_proceed_to_workbench = on_proceed_to_workbench
+        self.extraction_paths = active_extraction_paths(self.workspace)
 
         self.setWindowTitle("MaaDuelChannel 准备区圆框批量审核工作台 (2K 密集校对)")
         self.resize(2400, 1350)
 
-        self.store = ReviewStore(self.workspace / "review" / "corrections.jsonl")
+        self.store = ReviewStore(self.extraction_paths.corrections)
         self.samples: list[RoundSample] = []
         self.all_slots: list[dict] = []
         self.active_slots_filtered: list[dict] = []
@@ -404,9 +406,9 @@ class PrepRosterReviewWindow(QMainWindow):
         QShortcut(QKeySequence("Return"), self, self.save_and_proceed)
 
     def load_dataset(self) -> None:
-        manifest_path = self.workspace / "manifests" / "rounds.auto.jsonl"
+        manifest_path = self.extraction_paths.rounds_manifest
         if not manifest_path.exists():
-            QMessageBox.critical(self, "错误", f"未找到 manifests/rounds.auto.jsonl: {manifest_path}")
+            QMessageBox.critical(self, "错误", f"未找到自动提取清单: {manifest_path}")
             return
 
         automatic = read_jsonl(manifest_path, RoundSample)
@@ -420,12 +422,16 @@ class PrepRosterReviewWindow(QMainWindow):
         self.load_page(0)
 
     def _build_slots_index(self) -> None:
-        """Flatten samples into 6 slots per round."""
+        """Flatten samples into 6 slots per round, binding by physical slot index."""
         self.all_slots = []
         for sample_idx, sample in enumerate(self.samples):
             # Left 3 slots (0, 1, 2)
+            left_by_slot = {e.slot: e for e in sample.left.roster if getattr(e, "slot", None) is not None}
             for slot_idx in range(3):
-                if slot_idx < len(sample.left.roster):
+                if slot_idx in left_by_slot:
+                    entry = left_by_slot[slot_idx]
+                    eid, cnt = entry.enemy_id, entry.count
+                elif not left_by_slot and slot_idx < len(sample.left.roster):
                     entry = sample.left.roster[slot_idx]
                     eid, cnt = entry.enemy_id, entry.count
                 else:
@@ -445,8 +451,12 @@ class PrepRosterReviewWindow(QMainWindow):
                 )
 
             # Right 3 slots (0, 1, 2)
+            right_by_slot = {e.slot: e for e in sample.right.roster if getattr(e, "slot", None) is not None}
             for slot_idx in range(3):
-                if slot_idx < len(sample.right.roster):
+                if slot_idx in right_by_slot:
+                    entry = right_by_slot[slot_idx]
+                    eid, cnt = entry.enemy_id, entry.count
+                elif not right_by_slot and slot_idx < len(sample.right.roster):
                     entry = sample.right.roster[slot_idx]
                     eid, cnt = entry.enemy_id, entry.count
                 else:
@@ -632,7 +642,12 @@ class PrepRosterReviewWindow(QMainWindow):
             for slot_data in [s for s in self.all_slots if s["sample_idx"] == s_idx and s["side"] == "left"]:
                 if slot_data["enemy_id"] > 0 and slot_data["count"] > 0:
                     left_entries.append(
-                        RosterEntry(enemy_id=slot_data["enemy_id"], count=slot_data["count"], confidence=1.0)
+                        RosterEntry(
+                            enemy_id=slot_data["enemy_id"],
+                            count=slot_data["count"],
+                            confidence=1.0,
+                            slot=slot_data["slot_idx"],
+                        )
                     )
 
             # Right slots
@@ -640,7 +655,12 @@ class PrepRosterReviewWindow(QMainWindow):
             for slot_data in [s for s in self.all_slots if s["sample_idx"] == s_idx and s["side"] == "right"]:
                 if slot_data["enemy_id"] > 0 and slot_data["count"] > 0:
                     right_entries.append(
-                        RosterEntry(enemy_id=slot_data["enemy_id"], count=slot_data["count"], confidence=1.0)
+                        RosterEntry(
+                            enemy_id=slot_data["enemy_id"],
+                            count=slot_data["count"],
+                            confidence=1.0,
+                            slot=slot_data["slot_idx"],
+                        )
                     )
 
             sample.left.roster = left_entries

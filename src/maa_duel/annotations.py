@@ -25,6 +25,7 @@ from maa_duel.contracts import (
     stable_annotation_id,
     write_contract,
 )
+from maa_duel.extraction_state import active_extraction_paths
 from maa_duel.review import ReviewCorrection, ReviewStore
 from maa_duel.schema import (
     AnnotationSource,
@@ -107,10 +108,11 @@ def _class_names(workspace: Path, samples: list[RoundSample]) -> list[str]:
 def export_platform_annotations(workspace: Path, *, export_id: str | None = None) -> PlatformExport:
     """Build three upload-ready Platform datasets and a stable local mapping manifest."""
 
-    automatic = read_jsonl(workspace / "manifests" / "rounds.auto.jsonl", RoundSample)
+    extraction = active_extraction_paths(workspace)
+    automatic = read_jsonl(extraction.rounds_manifest, RoundSample)
     if not automatic:
         raise ValueError("automatic round manifest is empty; run extract first")
-    samples = ReviewStore(workspace / "review" / "corrections.jsonl").overlay(automatic)
+    samples = ReviewStore(extraction.corrections).overlay(automatic)
     export_id = export_id or datetime.now(UTC).strftime("platform-%Y%m%dT%H%M%S%fZ")
     root = workspace / "review" / "platform" / export_id
     if root.exists():
@@ -407,8 +409,9 @@ def import_platform_annotations(
 
 
 def _apply_imported_annotations(workspace: Path, records: list[AnnotationRecord], version: str) -> None:
-    automatic = read_jsonl(workspace / "manifests" / "rounds.auto.jsonl", RoundSample)
-    store = ReviewStore(workspace / "review" / "corrections.jsonl")
+    extraction = active_extraction_paths(workspace)
+    automatic = read_jsonl(extraction.rounds_manifest, RoundSample)
+    store = ReviewStore(extraction.corrections)
     effective = {sample.sample_id: sample for sample in store.overlay(automatic)}
     grouped: dict[str, list[AnnotationRecord]] = {}
     for record in records:

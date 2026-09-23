@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from maa_duel.extraction_state import active_extraction_paths
 from maa_duel.schema import (
     AnnotationSource,
     BoundingBox,
@@ -207,10 +208,11 @@ def launch_local_review(workspace: Path, port: int = 7860) -> None:
         except Exception:
             pass
 
-    automatic = read_jsonl(workspace / "manifests" / "rounds.auto.jsonl", RoundSample)
+    extraction = active_extraction_paths(workspace)
+    automatic = read_jsonl(extraction.rounds_manifest, RoundSample)
     if not automatic:
         raise ValueError("automatic round manifest is empty; run extract first")
-    store = ReviewStore(workspace / "review" / "corrections.jsonl")
+    store = ReviewStore(extraction.corrections)
     samples = store.overlay(automatic)
 
     def load(index: int):
@@ -358,5 +360,4 @@ def launch_local_review_qt(
         skip_prep_roster=skip_prep_roster,
         only_prep_roster=only_prep_roster,
     )
-
 

@@ -161,14 +161,38 @@ def extract(
     half: Annotated[bool, typer.Option("--half/--no-half", help="Use FP16 inference on supported GPUs.")] = True,
     batch_size: Annotated[int, typer.Option(min=1, help="YOLO inference batch size.")] = 32,
     scan_fps: Annotated[
-        float | None, typer.Option(min=1.0, max=30.0, help="Sampling frame rate for phase analysis.")
+        float | None,
+        typer.Option(
+            min=1.0,
+            max=30.0,
+            help="Coarse phase-scan frame rate; evidence refinement always uses the source FPS.",
+        ),
     ] = None,
     max_videos: Annotated[int | None, typer.Option(min=1, help="Limit number of videos to extract.")] = None,
     force: Annotated[
         bool, typer.Option("--force/--no-force", help="Force re-extraction of all videos from scratch.")
     ] = False,
+    reset_review: Annotated[
+        bool,
+        typer.Option(
+            "--reset-review/--keep-review",
+            help="Start a promoted full extraction with an empty review store; the previous run is retained.",
+        ),
+    ] = False,
+    phase_debug: Annotated[
+        bool,
+        typer.Option(
+            "--phase-debug/--no-phase-debug",
+            help="Write phase contact sheets for every candidate instead of unresolved candidates only.",
+        ),
+    ] = False,
     workers: Annotated[int, typer.Option(min=1, max=16, help="Number of parallel extraction workers.")] = 8,
 ) -> None:
+    if reset_review and not force:
+        raise typer.BadParameter("--reset-review requires --force")
+    if reset_review and max_videos is not None:
+        raise typer.BadParameter("--reset-review cannot be combined with --max-videos")
+
     from maa_duel.extraction import extract_rounds
 
     samples = extract_rounds(
@@ -180,6 +204,8 @@ def extract(
         scan_fps=scan_fps,
         max_videos=max_videos,
         force=force,
+        reset_review=reset_review,
+        phase_debug=phase_debug,
         workers=workers,
     )
     typer.echo(f"Extracted {len(samples)} round samples")
@@ -401,3 +427,7 @@ def report(
 
     path = write_report(workspace)
     typer.echo(f"Report: {path}")
+
+
+if __name__ == "__main__":
+    app()

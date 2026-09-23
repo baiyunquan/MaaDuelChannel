@@ -2,36 +2,64 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from maa_duel.extraction import VideoExtractor
 from maa_duel.schema import BoundingBox, ReviewStatus, SourceRef, Winner
 from maa_duel.video.phases import FrameSignals
-from maa_duel.vision.health import HealthCounts
 from maa_duel.vision.layout import RawDetection
 from maa_duel.vision.roster import RosterObservation
 
+FPS = 30.0
+PREP = 20
+LAYOUT = 60
+BANNER = 100
+BATTLE = 150
 
-def write_video(path: Path):
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (320, 180))
+
+def write_stage_video(path: Path, values: list[int]) -> None:
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (320, 180))
     assert writer.isOpened()
-    for index in range(50):
-        writer.write(np.full((180, 320, 3), index, dtype=np.uint8))
+    for value in values:
+        writer.write(np.full((180, 320, 3), value, dtype=np.uint8))
     writer.release()
 
 
-class FakePhaseAnalyzer:
+def round_frames(*, with_layout: bool = True, battle_frames: int = 75) -> list[int]:
+    values = [PREP] * 31
+    if with_layout:
+        values.extend([LAYOUT] * 2)
+    values.extend([BANNER] * 12)
+    values.extend([BATTLE] * battle_frames)
+    return values
+
+
+class MarkerPhaseAnalyzer:
     def analyze(self, frame, timestamp):
-        if timestamp < 0.2:
-            return FrameSignals(timestamp, True, countdown_seconds=2)
-        if timestamp < 0.4:
-            return FrameSignals(timestamp, True, countdown_seconds=1)
-        if timestamp < 0.6:
-            return FrameSignals(timestamp, True, countdown_seconds=0)
-        if timestamp < 1.0:
-            return FrameSignals(timestamp, True, layout_score=timestamp)
-        if timestamp < 1.2:
-            return FrameSignals(timestamp, True, round_number=1)
-        return FrameSignals(timestamp, True)
+        value = float(np.mean(frame))
+        if value > 220:
+            return FrameSignals(timestamp)
+        if value < 40:
+            return FrameSignals(
+                timestamp,
+                battlefield_score=1.0,
+                bottom_panel_score=1.0,
+                choice_buttons_score=1.0,
+                countdown_score=1.0,
+                corner_mask_score=1.0,
+                countdown_seconds=2,
+            )
+        if value < 80:
+            return FrameSignals(timestamp, battlefield_score=1.0, corner_mask_score=1.0)
+        if value < 125:
+            return FrameSignals(
+                timestamp,
+                battlefield_score=1.0,
+                round_banner_score=1.0,
+                corner_mask_score=1.0,
+                round_number=1,
+            )
+        return FrameSignals(timestamp, battlefield_score=1.0)
 
 
 class FakeRosterRecognizer:
@@ -42,178 +70,158 @@ class FakeRosterRecognizer:
         ]
 
 
-class FakeBattlefieldDetector:
-    def detect(self, frame):
-        return [
-            RawDetection(1, BoundingBox(x1=0.1, y1=0.2, x2=0.2, y2=0.4), 0.95),
-            RawDetection(2, BoundingBox(x1=0.8, y1=0.2, x2=0.9, y2=0.4), 0.95),
-        ]
+class MarkerBattlefieldDetector:
+    def detect(self, frame, *, candidate_enemy_ids=None):
+        value = float(np.mean(frame))
+        items = [RawDetection(1, BoundingBox(x1=0.3, y1=0.2, x2=0.4, y2=0.5), 0.95)]
+        if value < 125:
+            items.append(RawDetection(2, BoundingBox(x1=0.6, y1=0.2, x2=0.7, y2=0.5), 0.95))
+        if candidate_enemy_ids is not None:
+            items = [item for item in items if item.enemy_id in candidate_enemy_ids]
+        return items
 
 
-class FakeHealthDetector:
-    def __init__(self):
-        self.calls = 0
-
-    def count(self, frame):
-        self.calls += 1
-        if self.calls <= 3:
-            return HealthCounts(orange=1, blue=1)
-        return HealthCounts(orange=1, blue=0)
-
-
-class IncompletePhaseAnalyzer:
-    def analyze(self, frame, timestamp):
-        if timestamp < 0.4:
-            return FrameSignals(timestamp, True, countdown_seconds=1)
-        if timestamp < 0.8:
-            return FrameSignals(timestamp, True, round_number=1)
-        return FrameSignals(timestamp, True)
-
-
-class TwoWindowPhaseAnalyzer:
-    def analyze(self, frame, timestamp):
-        if timestamp < 0.2:
-            return FrameSignals(timestamp, True, countdown_seconds=2)
-        if timestamp < 0.4:
-            return FrameSignals(timestamp, True, countdown_seconds=1)
-        if timestamp < 0.6:
-            return FrameSignals(timestamp, True, countdown_seconds=0)
-        if timestamp < 0.8:
-            return FrameSignals(timestamp, True, layout_score=0.9)
-        if timestamp < 1.0:
-            return FrameSignals(timestamp, True, round_number=1)
-        if timestamp < 2.0:
-            return FrameSignals(timestamp, True)
-        if timestamp < 2.2:
-            return FrameSignals(timestamp, True, countdown_seconds=2)
-        if timestamp < 2.4:
-            return FrameSignals(timestamp, True, countdown_seconds=1)
-        if timestamp < 2.6:
-            return FrameSignals(timestamp, True, countdown_seconds=0)
-        if timestamp < 2.8:
-            return FrameSignals(timestamp, True, layout_score=0.9)
-        if timestamp < 3.0:
-            return FrameSignals(timestamp, True, round_number=2)
-        return FrameSignals(timestamp, True)
-
-
-class FailingSecondBattlefieldDetector(FakeBattlefieldDetector):
-    def __init__(self):
-        self.calls = 0
-
-    def detect(self, frame):
-        self.calls += 1
-        if self.calls == 2:
-            raise ValueError("second layout is unreadable")
-        return super().detect(frame)
-
-
-def test_video_extractor_runs_two_pass_pipeline_and_writes_evidence(tmp_path):
-    video = tmp_path / "source.mp4"
-    write_video(video)
-    source = SourceRef(video_relpath="绿藤/source.mp4", video_sha256="a" * 64)
-    extractor = VideoExtractor(
-        phase_analyzer=FakePhaseAnalyzer(),
+def make_extractor(*, evidence_prefix: Path = Path("frames")) -> VideoExtractor:
+    return VideoExtractor(
+        phase_analyzer=MarkerPhaseAnalyzer(),
         roster_recognizer=FakeRosterRecognizer(),
-        battlefield_detector=FakeBattlefieldDetector(),
-        health_detector=FakeHealthDetector(),
-        scan_fps=5.0,
-        stable_winner_frames=3,
+        battlefield_detector=MarkerBattlefieldDetector(),
+        scan_fps=10.0,
+        evidence_prefix=evidence_prefix,
     )
 
-    samples = extractor.extract_video(video, source, tmp_path / "workspace")
 
-    assert len(samples) == 1
-    assert samples[0].winner is Winner.LEFT
-    assert samples[0].review_status is ReviewStatus.ACCEPTED
-    assert Path(tmp_path / "workspace" / samples[0].evidence.prep).is_file()
-    assert Path(tmp_path / "workspace" / samples[0].evidence.layout).is_file()
-    assert Path(tmp_path / "workspace" / samples[0].evidence.end).is_file()
+def source(digest: str = "a") -> SourceRef:
+    return SourceRef(video_relpath="绿藤/source.mp4", video_sha256=digest * 64)
 
 
-def test_video_extractor_records_incomplete_windows(tmp_path):
+def test_native_rate_refinement_finds_two_frame_layout_gap_missed_by_coarse_scan(tmp_path) -> None:
     video = tmp_path / "source.mp4"
-    write_video(video)
-    extractor = VideoExtractor(
-        phase_analyzer=IncompletePhaseAnalyzer(),
-        roster_recognizer=FakeRosterRecognizer(),
-        battlefield_detector=FakeBattlefieldDetector(),
-        health_detector=FakeHealthDetector(),
-        scan_fps=5.0,
-    )
+    values = round_frames()
+    write_stage_video(video, values)
+    extractor = make_extractor()
 
     samples = extractor.extract_video(
         video,
-        SourceRef(video_relpath="source.mp4", video_sha256="b" * 64),
+        source(),
         tmp_path / "workspace",
+        duration=len(values) / FPS,
+        source_fps=FPS,
+    )
+
+    assert len(samples) == 1
+    sample = samples[0]
+    assert sample.timestamps.layout == pytest.approx(32 / FPS)
+    assert sample.timestamps.battle_start == pytest.approx(45 / FPS)
+    assert sample.timestamps.battle_end == pytest.approx((len(values) - 1) / FPS)
+    assert sample.winner is Winner.LEFT
+    assert sample.review_status is ReviewStatus.ACCEPTED
+    diagnostics = extractor.phase_diagnostics
+    assert diagnostics["resolution"] == {"width": 320, "height": 180}
+    assert diagnostics["fine_frames"] > 0
+    assert diagnostics["ocr_calls"] <= diagnostics["coarse_frames"] + diagnostics["fine_frames"]
+    assert diagnostics["selected_frames"][0]["layout"]["frame_index"] == 32
+    assert diagnostics["selected_frames"][0]["end"]["timestamp"] == sample.timestamps.battle_end
+
+
+def test_layout_unresolved_never_falls_back_to_prep_or_banner(tmp_path) -> None:
+    video = tmp_path / "source.mp4"
+    values = round_frames(with_layout=False)
+    write_stage_video(video, values)
+    extractor = make_extractor()
+
+    workspace = tmp_path / "workspace"
+    samples = extractor.extract_video(
+        video,
+        source("b"),
+        workspace,
+        duration=len(values) / FPS,
+        source_fps=FPS,
     )
 
     assert samples == []
-    assert len(extractor.issues) == 1
-    assert extractor.issues[0].kind == "incomplete_window"
-    assert "missing_layout" in extractor.issues[0].detail
+    assert any(issue.kind == "layout_unresolved" for issue in extractor.issues)
+    contact_sheets = extractor.phase_diagnostics["contact_sheets"]
+    assert len(contact_sheets) == 1
+    assert (workspace / contact_sheets[0]["path"]).is_file()
 
 
-def test_video_extractor_keeps_successful_round_when_later_round_fails(tmp_path):
+def test_native_refinement_recovers_prep_when_coarse_scan_only_sees_round(tmp_path) -> None:
     video = tmp_path / "source.mp4"
-    write_video(video)
-    extractor = VideoExtractor(
-        phase_analyzer=TwoWindowPhaseAnalyzer(),
-        roster_recognizer=FakeRosterRecognizer(),
-        battlefield_detector=FailingSecondBattlefieldDetector(),
-        health_detector=FakeHealthDetector(),
-        scan_fps=5.0,
-        stable_winner_frames=3,
-    )
+    values = [240, PREP, PREP, LAYOUT, LAYOUT, *([BANNER] * 12), *([BATTLE] * 75)]
+    write_stage_video(video, values)
+    extractor = make_extractor()
 
     samples = extractor.extract_video(
         video,
-        SourceRef(video_relpath="source.mp4", video_sha256="c" * 64),
+        source("f"),
         tmp_path / "workspace",
+        duration=len(values) / FPS,
+        source_fps=FPS,
     )
 
     assert len(samples) == 1
-    assert samples[0].round_index == 1
-    assert len(extractor.issues) == 1
-    assert extractor.issues[0].round_index == 2
-    assert extractor.issues[0].kind == "window_error"
+    assert samples[0].timestamps.prep == pytest.approx(2 / FPS)
+    assert samples[0].timestamps.layout == pytest.approx(4 / FPS)
 
 
-class NoCountdownOnReadPhaseAnalyzer(FakePhaseAnalyzer):
-    def __init__(self):
-        self.second_pass = False
-
-    def analyze(self, frame, timestamp):
-        res = super().analyze(frame, timestamp)
-        if self.second_pass:
-            return FrameSignals(
-                timestamp=res.timestamp,
-                game_visible=res.game_visible,
-                countdown_seconds=None,
-                round_number=res.round_number,
-                layout_score=res.layout_score,
-            )
-        if res.round_number is not None:
-            self.second_pass = True
-        return res
-
-
-def test_video_extractor_prep_validation_flags_unverified_prep_frame(tmp_path):
+def test_previous_round_end_frame_stays_before_next_round_prep(tmp_path) -> None:
     video = tmp_path / "source.mp4"
-    write_video(video)
-    source = SourceRef(video_relpath="绿藤/source.mp4", video_sha256="a" * 64)
-    extractor = VideoExtractor(
-        phase_analyzer=NoCountdownOnReadPhaseAnalyzer(),
-        roster_recognizer=FakeRosterRecognizer(),
-        battlefield_detector=FakeBattlefieldDetector(),
-        health_detector=FakeHealthDetector(),
-        scan_fps=5.0,
-        stable_winner_frames=3,
+    first = round_frames()
+    second = round_frames()
+    values = first + second
+    write_stage_video(video, values)
+    workspace = tmp_path / "workspace"
+
+    samples = make_extractor().extract_video(
+        video,
+        source("c"),
+        workspace,
+        duration=len(values) / FPS,
+        source_fps=FPS,
     )
 
-    samples = extractor.extract_video(video, source, tmp_path / "workspace")
+    assert len(samples) == 2
+    assert samples[0].timestamps.battle_end < len(first) / FPS
+    first_end = cv2.imread(str(workspace / samples[0].evidence.end))
+    assert first_end is not None
+    assert float(np.mean(first_end)) > 130.0
 
-    assert len(samples) == 1
-    assert samples[0].review_status is ReviewStatus.PENDING
-    assert "unverified_prep_frame" in samples[0].failure_reasons
-    assert any(issue.kind == "prep_validation" for issue in extractor.issues)
+
+def test_unresolved_later_round_does_not_discard_earlier_success(tmp_path) -> None:
+    video = tmp_path / "source.mp4"
+    first = round_frames()
+    second = round_frames(with_layout=False)
+    values = first + second
+    write_stage_video(video, values)
+    extractor = make_extractor()
+
+    samples = extractor.extract_video(
+        video,
+        source("d"),
+        tmp_path / "workspace",
+        duration=len(values) / FPS,
+        source_fps=FPS,
+    )
+
+    assert [sample.round_index for sample in samples] == [1]
+    assert any(issue.round_index == 2 and issue.kind == "layout_unresolved" for issue in extractor.issues)
+
+
+def test_evidence_prefix_can_target_a_staged_extraction_run(tmp_path) -> None:
+    video = tmp_path / "source.mp4"
+    values = round_frames()
+    write_stage_video(video, values)
+    prefix = Path("extraction-runs") / "run-1" / "frames"
+
+    sample = make_extractor(evidence_prefix=prefix).extract_video(
+        video,
+        source("e"),
+        tmp_path / "staging",
+        duration=len(values) / FPS,
+        source_fps=FPS,
+    )[0]
+
+    assert sample.evidence.layout is not None
+    assert Path(sample.evidence.layout).is_relative_to(prefix)
+    assert (tmp_path / "staging" / sample.evidence.layout).is_file()

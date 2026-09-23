@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from maa_duel.schema import RosterEntry
-from maa_duel.vision.ocr import OcrEngine, parse_count
+from maa_duel.vision.ocr import OcrEngine, parse_count, preprocess_count_crop
 
 SideName = Literal["left", "right"]
 NormalizedRect = tuple[float, float, float, float]
@@ -85,15 +85,18 @@ def calculate_safe_zone(width: int, height: int) -> tuple[int, int, int, int]:
 def _make_count_rect(
     cx: float, cy: float, r: float, side: SideName, width: int, height: int
 ) -> NormalizedRect:
-    y1 = max(0.0, (cy + r * 0.20) / height)
-    y2 = min(1.0, (cy + r * 1.15) / height)
+    # Text begins vertically around cy + 0.60*r to 1.20*r.
+    # Starting at cy + 0.48*r ensures upper portrait circle details are completely excluded,
+    # while leaving generous margin above the digits and the '×' sign.
+    y1 = max(0.0, (cy + r * 0.48) / height)
+    y2 = min(1.0, (cy + r * 1.25) / height)
     if side == "left":
-        # Left team: count text is at bottom-right of the circle
+        # Left team: count text is to the bottom-right of center
         x1 = max(0.0, (cx + r * 0.15) / width)
-        x2 = min(1.0, (cx + r * 1.15) / width)
+        x2 = min(1.0, (cx + r * 1.20) / width)
     else:
-        # Right team: count text is at bottom-left of the circle (mirrored towards center)
-        x1 = max(0.0, (cx - r * 1.15) / width)
+        # Right team: count text is to the bottom-left of center (mirrored towards center)
+        x1 = max(0.0, (cx - r * 1.20) / width)
         x2 = min(1.0, (cx - r * 0.15) / width)
     return (x1, y1, x2, y2)
 
@@ -386,8 +389,13 @@ class DualEngineClassifier:
                 conf = max(yolo_res.confidence, tmpl_res.confidence, self.agreement_boost)
                 merged.append(Classification(enemy_id=yolo_res.enemy_id, confidence=round(min(conf, 1.0), 4)))
             elif tmpl_res.confidence >= self.template_veto_threshold:
+                chosen_id = (
+                    tmpl_res.enemy_id
+                    if tmpl_res.confidence >= 0.70 and yolo_res.confidence < 0.50
+                    else yolo_res.enemy_id
+                )
                 conf = min(self.veto_confidence, yolo_res.confidence, tmpl_res.confidence)
-                merged.append(Classification(enemy_id=yolo_res.enemy_id, confidence=round(max(0.05, conf), 4)))
+                merged.append(Classification(enemy_id=chosen_id, confidence=round(max(0.05, conf), 4)))
             else:
                 merged.append(Classification(enemy_id=yolo_res.enemy_id, confidence=round(yolo_res.confidence, 4)))
         return merged
@@ -411,7 +419,7 @@ class RosterFrameRecognizer:
         *,
         slots: list[SlotSpec] | None = None,
         count_classifier: CountClassifier | None = None,
-        minimum_type_confidence: float = 0.25,
+        minimum_type_confidence: float = 0.15,
         minimum_count_confidence: float = 0.25,
         default_count: int | None = None,
     ) -> None:
@@ -482,10 +490,17 @@ class RosterFrameRecognizer:
                             )
                         )
                     continue
-                candidates = sorted(
-                    self.ocr.recognize(crop_normalized(frame, slot.count_rect), detect=False),
-                    key=lambda item: item.confidence,
-                    reverse=True,
+
+                raw_crop = crop_normalized(frame, slot.count_rect)
+                preprocessed = preprocess_count_crop(raw_crop)
+                candidates = (
+                    sorted(
+                        self.ocr.recognize(preprocessed, detect=False),
+                        key=lambda item: item.confidence,
+                        reverse=True,
+                    )
+                    if preprocessed is not None
+                    else []
                 )
                 detected_count: int | None = None
                 detected_count_conf: float = 0.0
@@ -498,6 +513,24 @@ class RosterFrameRecognizer:
                         break
                     except ValueError:
                         continue
+
+                # Fallback to raw crop recognition if preprocessed OCR was inconclusive
+                if detected_count is None:
+                    raw_candidates = sorted(
+                        self.ocr.recognize(raw_crop, detect=False),
+                        key=lambda item: item.confidence,
+                        reverse=True,
+                    )
+                    for candidate in raw_candidates:
+                        if candidate.confidence < self.minimum_count_confidence:
+                            continue
+                        try:
+                            detected_count = parse_count(candidate.text)
+                            detected_count_conf = candidate.confidence
+                            break
+                        except ValueError:
+                            continue
+
                 if detected_count is None and self.default_count is not None:
                     detected_count = self.default_count
                     detected_count_conf = 0.0
@@ -527,7 +560,7 @@ def fuse_roster_observations(
         grouped[(observation.side, observation.slot)].append(observation)
 
     by_side: dict[SideName, list[RosterEntry]] = {"left": [], "right": []}
-    for (side, _slot), values in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1])):
+    for (side, slot), values in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1])):
         type_votes: dict[int, float] = defaultdict(float)
         count_votes: dict[int, float] = defaultdict(float)
         for value in values:
@@ -549,5 +582,12 @@ def fuse_roster_observations(
             sum(selected_count_confidences) / len(selected_count_confidences),
         )
         if confidence >= minimum_confidence:
-            by_side[side].append(RosterEntry(enemy_id=enemy_id, count=count, confidence=min(confidence, 1.0)))
+            by_side[side].append(
+                RosterEntry(
+                    enemy_id=enemy_id,
+                    count=count,
+                    confidence=min(confidence, 1.0),
+                    slot=slot,
+                )
+            )
     return by_side

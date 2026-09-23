@@ -1,3 +1,5 @@
+import pytest
+
 from maa_duel.extraction import assemble_round_sample, stable_sample_id
 from maa_duel.schema import BoundingBox, ReviewStatus, RosterEntry, SourceRef, Winner
 from maa_duel.video.phases import RoundWindow
@@ -106,3 +108,23 @@ def test_runtime_extraction_reports_missing_model_artifacts(tmp_path):
         assert "roster" in str(exc)
     else:
         raise AssertionError("missing trained models must stop extraction")
+
+
+def test_reset_review_requires_force_before_loading_models(tmp_path):
+    from maa_duel.extraction import extract_rounds
+
+    with pytest.raises(ValueError, match="--reset-review requires --force"):
+        extract_rounds(tmp_path / "videos", tmp_path / "workspace", reset_review=True)
+
+
+def test_reset_review_rejects_partial_video_limit(tmp_path):
+    from maa_duel.extraction import extract_rounds
+
+    with pytest.raises(ValueError, match="--max-videos"):
+        extract_rounds(
+            tmp_path / "videos",
+            tmp_path / "workspace",
+            reset_review=True,
+            force=True,
+            max_videos=1,
+        )
