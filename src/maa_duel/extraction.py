@@ -1084,6 +1084,13 @@ def extract_rounds(
             previous_videos = previous_diagnostics.get("videos", [])
             if isinstance(previous_videos, list):
                 diagnostics.extend(item for item in previous_videos if isinstance(item, dict))
+                already_extracted_videos.update(
+                    item["video"]
+                    for item in previous_videos
+                    if isinstance(item, dict)
+                    and isinstance(item.get("video"), str)
+                    and not item.get("fatal_error")
+                )
 
     _copy_review_store(active.corrections, staged.paths.corrections, reset=reset_review)
     write_jsonl(staged.paths.rounds_manifest, samples)

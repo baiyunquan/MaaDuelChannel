@@ -189,3 +189,24 @@ def test_resume_only_schedules_videos_without_carried_samples(tmp_path, monkeypa
     diagnostics = json.loads(diagnostics_path.read_text())["videos"]
     assert [item["video"] for item in diagnostics] == ["video-01.mp4"]
     assert diagnostics[0]["ocr_backend"] == "cuda"
+
+
+def test_resume_does_not_reprocess_completed_zero_output_video(tmp_path, monkeypatch):
+    from maa_duel import extraction as extraction_module
+    from maa_duel.vision import ocr as ocr_module
+
+    input_dir, workspace = _prepare_workspace(tmp_path, [10])
+    staged = create_staged_extraction(workspace, run_id="seed-run")
+    write_jsonl(staged.paths.rounds_manifest, [])
+    staged.paths.corrections.write_text("")
+    staged.paths.phase_diagnostics.write_text(
+        json.dumps({"schema_version": 1, "videos": [{"video": "video-01.mp4", "output_rounds": 0}]})
+    )
+    publish_staged_extraction(workspace, staged)
+
+    class FailingOcr:
+        def __init__(self, **kwargs) -> None:
+            raise AssertionError("completed video should not initialize OCR")
+
+    monkeypatch.setattr(ocr_module, "RapidOcrEngine", FailingOcr)
+    assert extraction_module.extract_rounds(input_dir, workspace, workers=1) == []
