@@ -36,10 +36,7 @@ def _prepare_cuda_runtime() -> None:
 
     site_packages_win = Path(sys.prefix) / "Lib" / "site-packages"
     site_packages_linux = (
-        Path(sys.prefix)
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
+        Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
     )
     site_packages = site_packages_linux if site_packages_linux.is_dir() else site_packages_win
 
@@ -215,7 +212,9 @@ def parse_round_number(text: str) -> int | None:
 class RapidOcrEngine:
     """Lazy RapidOCR adapter with optional CUDA acceleration."""
 
-    def __init__(self, *, use_cuda: bool = True) -> None:
+    def __init__(self, *, use_cuda: bool = True, cpu_threads: int = 2) -> None:
+        if cpu_threads < 1:
+            raise ValueError("cpu_threads must be at least 1")
         self._use_cuda = use_cuda
         if use_cuda:
             _prepare_cuda_runtime()
@@ -246,36 +245,51 @@ class RapidOcrEngine:
                 "EngineConfig.onnxruntime.use_cuda": True,
                 "EngineConfig.onnxruntime.intra_op_num_threads": 1,
                 "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+                "EngineConfig.onnxruntime.cuda_ep_cfg.gpu_mem_limit": 536870912,
+                "EngineConfig.onnxruntime.cuda_ep_cfg.arena_extend_strategy": "kSameAsRequested",
+                "EngineConfig.onnxruntime.cuda_ep_cfg.cudnn_conv_algo_search": "HEURISTIC",
+                "EngineConfig.onnxruntime.cuda_ep_cfg.cudnn_conv_use_max_workspace": False,
                 "Det.engine_cfg.use_cuda": True,
                 "Cls.engine_cfg.use_cuda": False,
                 "Rec.engine_cfg.use_cuda": True,
+            }
+        else:
+            params = {
+                "EngineConfig.onnxruntime.use_cuda": False,
+                "EngineConfig.onnxruntime.intra_op_num_threads": cpu_threads,
+                "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+                "Det.engine_cfg.use_cuda": False,
+                "Cls.engine_cfg.use_cuda": False,
+                "Rec.engine_cfg.use_cuda": False,
             }
         self._RapidOCR = RapidOCR
         try:
             self._engine = RapidOCR(params=params)
             if use_cuda:
                 self._engine(np.zeros((32, 32, 3), dtype=np.uint8), use_det=False, use_cls=False, use_rec=True)
-                self._providers = self._session_providers()
-                if not self._providers or self._providers[0] != "CUDAExecutionProvider":
-                    raise RuntimeError(
-                        "RapidOCR CUDA requested but the OCR session did not select CUDAExecutionProvider; "
-                        f"providers={self._providers}"
-                    )
+                for component_name, label in (("text_det", "detection"), ("text_rec", "recognition")):
+                    providers = self._component_providers(component_name)
+                    if not providers or providers[0] != "CUDAExecutionProvider":
+                        raise RuntimeError(
+                            f"RapidOCR {label} session did not select CUDAExecutionProvider; providers={providers}"
+                        )
         except Exception as exc:
             if use_cuda:
-                raise RuntimeError("RapidOCR CUDA initialization/inference failed; CPU fallback is disabled") from exc
-            self._engine = RapidOCR()
+                raise RuntimeError(f"RapidOCR CUDA initialization/inference failed: {exc}") from exc
+            raise RuntimeError(f"RapidOCR CPU initialization failed: {exc}") from exc
         self._providers = self._session_providers()
+
+    def _component_providers(self, component_name: str) -> tuple[str, ...]:
+        component = getattr(self._engine, component_name, None)
+        session_wrapper = getattr(component, "session", None)
+        session = getattr(session_wrapper, "session", session_wrapper)
+        get_providers = getattr(session, "get_providers", None)
+        return tuple(str(item) for item in get_providers()) if callable(get_providers) else ()
 
     def _session_providers(self) -> tuple[str, ...]:
         providers: list[str] = []
         for component_name in ("text_det", "text_rec", "text_cls"):
-            component = getattr(self._engine, component_name, None)
-            session_wrapper = getattr(component, "session", None)
-            session = getattr(session_wrapper, "session", session_wrapper)
-            get_providers = getattr(session, "get_providers", None)
-            if callable(get_providers):
-                providers.extend(str(item) for item in get_providers())
+            providers.extend(self._component_providers(component_name))
         return tuple(dict.fromkeys(providers))
 
     def recognize(self, image: np.ndarray, *, detect: bool = True) -> list[OcrText]:
@@ -284,8 +298,7 @@ class RapidOcrEngine:
         except Exception as exc:
             if getattr(self, "_use_cuda", False):
                 raise RuntimeError("RapidOCR CUDA inference failed; refusing a silent CPU fallback") from exc
-            self._engine = self._RapidOCR()
-            result = self._engine(image, use_det=detect, use_cls=False, use_rec=True)
+            raise RuntimeError("RapidOCR CPU inference failed") from exc
         texts = [] if result.txts is None else list(result.txts)
         scores = [] if result.scores is None else list(result.scores)
         boxes = ([] if result.boxes is None else list(result.boxes)) if detect else [None] * len(texts)

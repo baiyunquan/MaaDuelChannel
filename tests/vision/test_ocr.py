@@ -65,6 +65,68 @@ def test_rapidocr_cuda_mode_does_not_silently_fallback_to_cpu():
         engine.recognize(np.zeros((10, 20, 3), dtype=np.uint8))
 
 
+def test_cpu_ocr_inference_failure_does_not_replace_configured_session():
+    import numpy as np
+
+    from maa_duel.vision.ocr import RapidOcrEngine
+
+    engine = RapidOcrEngine.__new__(RapidOcrEngine)
+    engine._use_cuda = False
+
+    def original(*args, **kwargs):
+        raise RuntimeError("cpu failed")
+
+    engine._engine = original
+    engine._RapidOCR = lambda: (_ for _ in ()).throw(AssertionError("unexpected unconfigured OCR session"))
+
+    with pytest.raises(RuntimeError, match="CPU inference failed"):
+        engine.recognize(np.zeros((10, 20, 3), dtype=np.uint8))
+    assert engine._engine is original
+
+
+def test_cpu_ocr_uses_requested_onnx_threads_and_cpu_provider():
+    from maa_duel.vision.ocr import RapidOcrEngine
+
+    engine = RapidOcrEngine(use_cuda=False, cpu_threads=2)
+
+    for component_name in ("text_det", "text_rec"):
+        component = getattr(engine._engine, component_name)
+        session = component.session.session
+        assert session.get_providers() == ["CPUExecutionProvider"]
+        assert session.get_session_options().intra_op_num_threads == 2
+        assert session.get_session_options().inter_op_num_threads == 1
+
+
+def test_cuda_ocr_rejects_cpu_recognition_session(monkeypatch):
+    from types import SimpleNamespace
+
+    import rapidocr
+
+    from maa_duel.vision import ocr as ocr_module
+
+    class Session:
+        def __init__(self, provider: str) -> None:
+            self.provider = provider
+
+        def get_providers(self) -> list[str]:
+            return [self.provider]
+
+    class FakeRapidOCR:
+        def __init__(self, params=None) -> None:
+            self.text_det = SimpleNamespace(session=SimpleNamespace(session=Session("CUDAExecutionProvider")))
+            self.text_rec = SimpleNamespace(session=SimpleNamespace(session=Session("CPUExecutionProvider")))
+            self.text_cls = SimpleNamespace(session=SimpleNamespace(session=Session("CPUExecutionProvider")))
+
+        def __call__(self, *args, **kwargs):
+            return SimpleNamespace(txts=None, scores=None, boxes=None)
+
+    monkeypatch.setattr(ocr_module, "_prepare_cuda_runtime", lambda: None)
+    monkeypatch.setattr(rapidocr, "RapidOCR", FakeRapidOCR)
+
+    with pytest.raises(RuntimeError, match="recognition.*CUDAExecutionProvider"):
+        ocr_module.RapidOcrEngine(use_cuda=True)
+
+
 def test_preprocess_count_crop() -> None:
     import cv2
     import numpy as np

@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Protocol
 import cv2
 import numpy as np
 
+from maa_duel.extraction_schedule import schedule_ocr_jobs
 from maa_duel.extraction_state import (
     StagedExtraction,
     active_extraction_paths,
@@ -120,20 +122,12 @@ def _carry_forward_samples(
         for label in ("prep", "layout", "end"):
             raw_path = getattr(sample.evidence, label)
             if raw_path is None:
-                raise ValueError(
-                    f"cannot carry sample {sample.sample_id} with missing {label} evidence; use --force"
-                )
+                raise ValueError(f"cannot carry sample {sample.sample_id} with missing {label} evidence; use --force")
             source_path = workspace / raw_path
             if not source_path.is_file():
-                raise FileNotFoundError(
-                    f"cannot carry sample {sample.sample_id}; evidence is missing: {source_path}"
-                )
+                raise FileNotFoundError(f"cannot carry sample {sample.sample_id}; evidence is missing: {source_path}")
             suffix = source_path.suffix or ".jpg"
-            relative = (
-                staged.evidence_prefix
-                / sample.source.video_sha256[:12]
-                / f"{sample.sample_id}-{label}{suffix}"
-            )
+            relative = staged.evidence_prefix / sample.source.video_sha256[:12] / f"{sample.sample_id}-{label}{suffix}"
             destination = staged.staging_workspace / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -164,7 +158,7 @@ def assemble_round_sample(
     winner_confidence: float | None,
     evidence: dict[str, str],
     acceptance_confidence: float = 0.8,
-    pipeline_version: str = "0.2.0",
+    pipeline_version: str = "0.2.1",
     extra_reasons: tuple[str, ...] = (),
 ) -> RoundSample:
     if None in (window.prep_time, window.layout_time, window.battle_start):
@@ -187,13 +181,7 @@ def assemble_round_sample(
     if winner_confidence is not None:
         confidences.append(winner_confidence)
     high_confidence = bool(confidences) and min(confidences) >= acceptance_confidence
-    accepted = (
-        window.complete
-        and reconciled.accepted
-        and winner is not None
-        and high_confidence
-        and not extra_reasons
-    )
+    accepted = window.complete and reconciled.accepted and winner is not None and high_confidence and not extra_reasons
     if not high_confidence:
         reasons.append("low_confidence")
 
@@ -347,10 +335,7 @@ class VideoExtractor:
         for candidate in candidates:
             if not self.phase_debug and candidate.round_index not in issue_rounds:
                 continue
-            relative = (
-                self.contact_sheet_prefix
-                / f"{source.video_sha256[:12]}-round-{candidate.round_index:03d}.jpg"
-            )
+            relative = self.contact_sheet_prefix / f"{source.video_sha256[:12]}-round-{candidate.round_index:03d}.jpg"
             try:
                 self._write_contact_sheet(
                     video_path,
@@ -445,11 +430,7 @@ class VideoExtractor:
                 min(candidate.layout_search.end, candidate.prep_span.end + guard),
             )
         else:
-            prep_end = (
-                candidate.round_span.start
-                if candidate.round_span is not None
-                else candidate.layout_search.end
-            )
+            prep_end = candidate.round_span.start if candidate.round_span is not None else candidate.layout_search.end
             prep_search = TimeSpan(candidate.layout_search.start, max(candidate.layout_search.start, prep_end))
         prep_frames = self._analyze_interval(
             video_path,
@@ -716,10 +697,7 @@ class VideoExtractor:
             observations = [item for frame in prep_frames for item in self.roster_recognizer.recognize(frame)]
         rosters = fuse_roster_observations(observations)
         candidate_enemy_ids = {
-            entry.enemy_id
-            for side_roster in rosters.values()
-            for entry in side_roster
-            if entry.enemy_id > 0
+            entry.enemy_id for side_roster in rosters.values() for entry in side_roster if entry.enemy_id > 0
         }
 
         layout_frame = refined.layout.frame
@@ -1028,8 +1006,12 @@ def extract_rounds(
     active = active_extraction_paths(workspace)
     staged = create_staged_extraction(workspace)
 
-    def make_extractor() -> VideoExtractor:
-        ocr_local = RapidOcrEngine(use_cuda=device != "cpu")
+    gpu_ocr_enabled = device != "cpu"
+    cpu_worker_count = workers - int(gpu_ocr_enabled)
+    cpu_ocr_threads = 2
+
+    def make_extractor(backend: str) -> VideoExtractor:
+        ocr_local = RapidOcrEngine(use_cuda=backend == "cuda", cpu_threads=cpu_ocr_threads)
         count_classifier_local = (
             YoloCountClassifier(
                 ocr_model,
@@ -1082,9 +1064,7 @@ def extract_rounds(
             stable_winner_frames=config.stable_winner_frames,
             evidence_prefix=staged.evidence_prefix,
             phase_debug=phase_debug,
-            contact_sheet_prefix=(
-                Path("extraction-runs") / staged.run_id / "reports" / "phase-contact-sheets"
-            ),
+            contact_sheet_prefix=(Path("extraction-runs") / staged.run_id / "reports" / "phase-contact-sheets"),
         )
 
     samples: list[RoundSample] = []
@@ -1118,6 +1098,11 @@ def extract_rounds(
         for idx, record in enumerate(gv_records, start=1)
         if record.relative_path not in already_extracted_videos
     ]
+    gpu_jobs, cpu_jobs = schedule_ocr_jobs(
+        pending_records,
+        workers=workers,
+        gpu_enabled=gpu_ocr_enabled,
+    )
 
     typer.echo(
         f"Extracting {len(gv_records)} Green Vine videos at {fps:.1f} fps using {workers} worker(s) "
@@ -1126,16 +1111,22 @@ def extract_rounds(
 
     tls = threading.local()
 
-    def get_thread_extractor() -> VideoExtractor:
+    def get_thread_extractor(backend: str) -> VideoExtractor:
         if not hasattr(tls, "extractor"):
-            tls.extractor = make_extractor()
+            tls.extractor = make_extractor(backend)
+            tls.backend = backend
+        elif tls.backend != backend:
+            raise RuntimeError(f"OCR worker backend changed from {tls.backend} to {backend}")
         return tls.extractor
 
     def process_record(
         record_item: tuple[int, VideoRecord],
+        backend: str,
     ) -> tuple[list[RoundSample], list[dict[str, object]], dict[str, object]]:
         index, record = record_item
-        extractor = get_thread_extractor()
+        started = time.perf_counter()
+        extractor = get_thread_extractor(backend)
+        ocr_providers = list(extractor.phase_analyzer.ocr._providers)
         path = input_dir / Path(record.relative_path)
         source = SourceRef(video_relpath=record.relative_path, video_sha256=record.sha256)
         typer.echo(f"[{index}/{len(gv_records)}] Starting {record.relative_path} ({record.duration:.1f}s)...")
@@ -1163,7 +1154,13 @@ def extract_rounds(
                 }
                 for issue in extractor.issues
             ]
-            return extracted, local_errors, dict(extractor.phase_diagnostics)
+            diagnostic = dict(extractor.phase_diagnostics)
+            diagnostic.update(
+                ocr_backend=backend,
+                ocr_providers=ocr_providers,
+                elapsed_seconds=round(time.perf_counter() - started, 3),
+            )
+            return extracted, local_errors, diagnostic
         except (OSError, ValueError, RuntimeError) as exc:
             typer.echo(f"[{index}/{len(gv_records)}] Error {record.relative_path}: {exc}", err=True)
             diagnostic = {
@@ -1172,6 +1169,9 @@ def extract_rounds(
                 "duration": record.duration,
                 "source_fps": record.fps,
                 "fatal_error": str(exc),
+                "ocr_backend": backend,
+                "ocr_providers": ocr_providers,
+                "elapsed_seconds": round(time.perf_counter() - started, 3),
             }
             return [], [{"video": record.relative_path, "kind": "video_error", "error": str(exc)}], diagnostic
 
@@ -1190,11 +1190,29 @@ def extract_rounds(
         write_jsonl(staged.paths.rounds_manifest, samples)
 
     if workers <= 1:
-        for item in pending_records:
-            collect(*process_record(item))
+        backend = "cuda" if gpu_ocr_enabled else "cpu"
+        for item in gpu_jobs or cpu_jobs:
+            collect(*process_record(item, backend))
     else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(process_record, item) for item in pending_records]
+        with contextlib.ExitStack() as stack:
+            gpu_executor = (
+                stack.enter_context(concurrent.futures.ThreadPoolExecutor(max_workers=1)) if gpu_jobs else None
+            )
+            if gpu_executor is not None:
+                # Validate the one CUDA OCR session before CPU workers start.
+                gpu_executor.submit(get_thread_extractor, "cuda").result()
+            cpu_executor = (
+                stack.enter_context(concurrent.futures.ThreadPoolExecutor(max_workers=cpu_worker_count))
+                if cpu_jobs
+                else None
+            )
+            futures = (
+                [gpu_executor.submit(process_record, item, "cuda") for item in gpu_jobs]
+                if gpu_executor is not None
+                else []
+            )
+            if cpu_executor is not None:
+                futures.extend(cpu_executor.submit(process_record, item, "cpu") for item in cpu_jobs)
             for future in concurrent.futures.as_completed(futures):
                 collect(*future.result())
 

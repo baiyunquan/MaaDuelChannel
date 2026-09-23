@@ -156,6 +156,8 @@ uv run duel extract --input-dir D:\MAA-DuelChannel\training-data --workspace D:\
 
 `--scan-fps` 只控制阶段发现的粗扫帧率；证据选择始终按视频原始帧率顺序细扫。提取器使用多信号阶段状态机：
 
+默认 `--workers 8` 时，最长的待处理视频固定交给唯一的 CUDA RapidOCR worker；另外 7 个 worker 各使用独立的两线程 CPU RapidOCR。YOLO 仍按 `--device` 使用 GPU。CUDA OCR 初始化或推理失败会使本轮提取失败，不会静默切换 CPU；每个视频实际使用的 OCR 后端、provider、耗时和 OCR 次数写入 `phase-diagnostics.json`。
+
 1. 10 FPS 粗扫地图、底栏、成对选择按钮、倒计时、ROUND 和四角状态，生成连续候选局。
 2. 在候选边界按源 FPS 选择准备帧、倒计时与 ROUND 之间的站位帧，以及 ROUND 和角落遮罩消失后的战斗起点。
 3. 结束证据只能来自下一阶段边界前、中央没有倒计时或 ROUND 的最后合法战场段。

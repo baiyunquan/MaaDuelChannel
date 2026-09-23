@@ -47,6 +47,7 @@ def test_assemble_round_sample_auto_accepts_consistent_high_confidence_round():
     assert sample.review_status is ReviewStatus.ACCEPTED
     assert sample.winner is Winner.LEFT
     assert len(sample.sample_id) == 32
+    assert sample.pipeline_version == "0.2.1"
 
 
 def test_sample_id_does_not_change_when_layout_evidence_time_moves():
