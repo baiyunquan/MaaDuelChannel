@@ -1,5 +1,7 @@
 # MaaDuelChannel 开发指南
 
+Before proposing OCR, YOLO, VLM, or neural inference on every frame, first investigate whether deterministic visual signals, fixed ROIs, temporal information, template matching, color statistics, perceptual similarity, or lightweight classifiers can reduce the candidate set.
+
 ## 项目定位
 
 本项目从《明日方舟》“争锋频道”录屏中提取绿藤城（`green_vine`）对局，经过视觉识别、人工审核和数据版本化，训练根据初始阵容与站位预测左方胜率的 Relation Transformer。
