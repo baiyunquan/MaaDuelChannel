@@ -15,7 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 ocr = ["rapidocr>=3.0", "onnxruntime-gpu>=1.23,<1.24", "nvidia-cudnn-cu12"]
 vision = ["ultralytics>=8.3"]
-review = ["gradio>=5.0", "pyqt6>=6.7"]
+review = ["pyqt6>=6.7"]
 cpu = ["torch>=2.7", "torchvision>=0.22"]
 cu128 = ["torch>=2.7", "torchvision>=0.22"]
 
@@ -24,6 +24,7 @@ duel = "maa_duel.cli:app"
 
 [dependency-groups]
 dev = [
+  "playwright>=1.63.0",
   "pytest>=8.3",
   "pytest-cov>=6.0",
   "ruff>=0.11",

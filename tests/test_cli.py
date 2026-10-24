@@ -42,13 +42,12 @@ def test_training_commands_expose_reproducibility_options():
     assert "fetch-prts-combat" in assets.stdout
 
 
-def test_review_command_exposes_video_dir_and_web_options():
+def test_review_command_exposes_review_options():
     runner = CliRunner()
     result = runner.invoke(app, ["review", "--help"])
 
     assert result.exit_code == 0
     assert "--video-dir" in result.stdout
-    assert "--web" in result.stdout
     assert "--platform" in result.stdout
     assert "--skip-prep-roster" in result.stdout
     assert "--only-prep-roster" in result.stdout

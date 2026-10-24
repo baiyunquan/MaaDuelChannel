@@ -20,3 +20,4 @@ workspace/
 data/
 assets/cache/
 .worktrees/
+serial_logs/

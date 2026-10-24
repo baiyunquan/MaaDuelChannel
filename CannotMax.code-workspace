@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "."
+		},
+		{
+			"path": "../../../data/workspace/PresidentDataset"
 		}
 	],
 	"settings": {}
