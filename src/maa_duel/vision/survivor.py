@@ -8,7 +8,7 @@ import numpy as np
 
 from maa_duel.schema import Winner
 from maa_duel.video.evidence import TimedFrame
-from maa_duel.vision.layout import RawDetection
+from maa_duel.vision.layout import RawDetection, expand_contestant_ids_to_entities
 
 
 class BattlefieldDetector(Protocol):
@@ -75,9 +75,11 @@ class BattlefieldSurvivorDetector:
             raise ValueError("validated end frames must not be empty")
         ordered = sorted(end_run, key=lambda item: (item.timestamp, item.frame_index))
         window = ordered[-self.majority_window :]
-        detections = self._detect_frames(window, (left_eids | right_eids) - {0})
+        expanded_left = expand_contestant_ids_to_entities(left_eids)
+        expanded_right = expand_contestant_ids_to_entities(right_eids)
+        detections = self._detect_frames(window, (expanded_left | expanded_right) - {0})
         evaluated = [
-            self._evaluate_frame(frame, frame_detections, left_eids=left_eids, right_eids=right_eids)
+            self._evaluate_frame(frame, frame_detections, left_eids=expanded_left, right_eids=expanded_right)
             for frame, frame_detections in zip(window, detections, strict=True)
         ]
 

@@ -13,11 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AssetFile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     source: str
     relative_path: str
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    enemy_id_internal: str | None = None
 
 
 class SpineVariant(BaseModel):
@@ -234,6 +235,9 @@ def import_animation_assets(
 
     imported_count = 0
     for file in sorted(animation_dir.glob("*.webm")):
+        lower_name = file.name.lower()
+        if any(keyword in lower_name for keyword in ["attack", "die", "hit", "skill"]):
+            continue
         base_name = file.name.split("-默认-战斗-")[0].split("-默认-")[0].split(".")[0]
         enemy = name_to_enemy.get(base_name)
         if enemy is None:

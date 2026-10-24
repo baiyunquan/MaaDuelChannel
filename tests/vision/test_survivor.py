@@ -131,3 +131,27 @@ def test_survivor_rejects_empty_validated_end_run() -> None:
             left_eids={1},
             right_eids={2},
         )
+
+
+def test_survivor_resolves_composite_entity_detections() -> None:
+    # 58 is 侠客三人行, 93 is 枣大刀. Detected 93 should support contestant 58 (LEFT)
+    detector = SequenceDetector(
+        {
+            1: [detection(93)],
+            2: [detection(93)],
+            3: [detection(93)],
+            4: [detection(93)],
+            5: [detection(93)],
+        }
+    )
+
+    result = BattlefieldSurvivorDetector(detector).detect_winner(
+        end_run=tuple(end_frame(index) for index in range(1, 6)),
+        left_eids={58},
+        right_eids={1},
+    )
+
+    assert result.winner is Winner.LEFT
+    assert result.left_survivors == 1
+    assert result.right_survivors == 0
+

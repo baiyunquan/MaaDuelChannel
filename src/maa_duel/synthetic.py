@@ -13,6 +13,7 @@ import numpy as np
 import yaml
 
 from maa_duel.assets import EnemyAsset, find_empty_slot_image, import_animation_assets, load_asset_manifest
+from maa_duel.vision.layout import CONTESTANT_TO_ENTITIES, ENTITY_TO_CONTESTANT
 
 
 @dataclass(frozen=True)
@@ -98,15 +99,48 @@ def _augment_portrait(image: np.ndarray, rng: np.random.Generator) -> np.ndarray
     return canvas
 
 
-def _augment_empty_slot(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    rgba = _rgba(image)
+def _augment_empty_slot(
+    image: np.ndarray,
+    rng: np.random.Generator,
+    backgrounds: list[np.ndarray] | None = None,
+) -> np.ndarray:
+    rgba = image if len(image.shape) > 2 and image.shape[2] == 4 else _rgba(image)
     scale = float(rng.uniform(0.80, 1.05))
     size = min(108, max(24, round(96 * scale)))
     resized = cv2.resize(rgba, (size, size), interpolation=cv2.INTER_AREA)
-    canvas = np.full((112, 112, 3), int(rng.integers(15, 60)), dtype=np.uint8)
+
+    canvas: np.ndarray | None = None
+    if backgrounds and rng.random() < 0.70:
+        bg = backgrounds[int(rng.integers(0, len(backgrounds)))]
+        bh, bw = bg.shape[:2]
+        if bh >= 112 and bw >= 112:
+            by = int(rng.integers(0, bh - 112 + 1))
+            bx = int(rng.integers(0, bw - 112 + 1))
+            canvas = bg[by : by + 112, bx : bx + 112].copy()
+            if len(canvas.shape) > 2 and canvas.shape[2] == 4:
+                canvas = canvas[:, :, :3]
+
+    if canvas is None:
+        base_val = int(rng.integers(25, 75))
+        canvas = np.full((112, 112, 3), base_val, dtype=np.uint8)
+        noise = rng.integers(-15, 15, size=(112, 112, 3), dtype=np.int16)
+        canvas = np.clip(canvas.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+        if rng.random() < 0.40:
+            seam = int(rng.integers(20, 90))
+            if rng.random() < 0.5:
+                canvas[:, seam : seam + 2] = np.clip(canvas[:, seam : seam + 2].astype(int) - 18, 0, 255)
+            else:
+                canvas[seam : seam + 2, :] = np.clip(canvas[seam : seam + 2, :].astype(int) - 18, 0, 255)
+
     x = max(0, (112 - size) // 2)
     y = max(0, (112 - size) // 2)
     _composite(canvas, resized, x, y)
+
+    if rng.random() < 0.25:
+        corner_color = (25, 25, 180) if rng.random() < 0.5 else (180, 25, 25)
+        pts = np.array([[0, 0], [24, 0], [0, 24]], dtype=np.int32)
+        cv2.fillPoly(canvas, [pts], corner_color)
+
     gain = float(rng.uniform(0.85, 1.15))
     canvas = np.clip(canvas.astype(np.float32) * gain, 0, 255).astype(np.uint8)
     if rng.random() < 0.35:
@@ -140,10 +174,37 @@ def _generate_synthetic_dataset(
         import_animation_assets(workspace)
         manifest = load_asset_manifest(catalog_path)
         available_animations = _available(manifest, "animation")
+    sprites_root = workspace / "assets" / "sprites"
+    sprite_bank: dict[int, list[np.ndarray]] = {}
+    if sprites_root.is_dir():
+        for unit_dir in sorted(sprites_root.iterdir()):
+            if not unit_dir.is_dir() or not unit_dir.name.isdigit():
+                continue
+            enemy_id = int(unit_dir.name)
+            frames: list[np.ndarray] = []
+            for sub in ("idle", "move"):
+                for png_file in sorted((unit_dir / sub).glob("*.png")):
+                    img = _read_image(png_file)
+                    frames.append(_rgba(img))
+            if frames:
+                sprite_bank[enemy_id] = frames
+
+    if not sprite_bank:
+        sprite_bank = {
+            enemy.enemy_id: _sprite_frames(workspace / relative_path)
+            for enemy, relative_path in available_animations
+        }
+
     rng = np.random.default_rng(seed)
     available_portraits = _available(manifest, "portrait")
-    class_ids = sorted(enemy.enemy_id for enemy, _ in available_animations)
+    class_ids = sorted(sprite_bank.keys())
     class_index = {enemy_id: index for index, enemy_id in enumerate(class_ids)}
+
+    backgrounds = [
+        _read_image(path)[:, :, :3]
+        for path in sorted((workspace / "assets" / "backgrounds").glob("*"))
+        if path.is_file()
+    ]
 
     empty_slot_path = find_empty_slot_image(workspace, empty_slot_image)
     empty_slot_count = 0
@@ -154,7 +215,7 @@ def _generate_synthetic_dataset(
         train_empty_dir.mkdir(parents=True, exist_ok=True)
         val_empty_dir.mkdir(parents=True, exist_ok=True)
         for variant in range(portrait_variants):
-            augmented = _augment_empty_slot(empty_img, rng)
+            augmented = _augment_empty_slot(empty_img, rng, backgrounds=backgrounds)
             filename = f"0000-{variant:04d}.jpg"
             destination = train_empty_dir / filename
             cv2.imencode(".jpg", augmented, [cv2.IMWRITE_JPEG_QUALITY, int(rng.integers(65, 96))])[1].tofile(
@@ -194,17 +255,8 @@ def _generate_synthetic_dataset(
         json.dumps(roster_map, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-
-    backgrounds = [
-        _read_image(path)[:, :, :3]
-        for path in sorted((workspace / "assets" / "backgrounds").glob("*"))
-        if path.is_file()
-    ]
     if detection_images > 0 and not backgrounds:
         raise ValueError("battlefield synthesis requires at least one image in assets/backgrounds")
-    sprite_bank = {
-        enemy.enemy_id: _sprite_frames(workspace / relative_path) for enemy, relative_path in available_animations
-    }
     image_dir = output / "battlefield" / "images" / "train"
     label_dir = output / "battlefield" / "labels" / "train"
     image_dir.mkdir(parents=True, exist_ok=True)
@@ -212,32 +264,41 @@ def _generate_synthetic_dataset(
 
     produced_detection_images = 0
     if detection_images > 0 and sprite_bank:
-        enemy_ids = sorted(sprite_bank)
+        sub_entity_ids = set(ENTITY_TO_CONTESTANT)
+        candidate_contestants = sorted(eid for eid in sprite_bank if eid not in sub_entity_ids)
+        if not candidate_contestants:
+            candidate_contestants = sorted(sprite_bank)
+
         for image_index in range(detection_images):
             background = backgrounds[int(rng.integers(0, len(backgrounds)))].copy()
             height, width = background.shape[:2]
             labels: list[str] = []
-            unit_count = int(rng.integers(1, min(7, len(enemy_ids) + 3)))
-            for _ in range(unit_count):
-                enemy_id = int(rng.choice(enemy_ids))
-                sprite = sprite_bank[enemy_id][int(rng.integers(0, len(sprite_bank[enemy_id])))]
-                target_height = int(rng.uniform(0.10, 0.22) * height)
-                target_width = max(4, round(sprite.shape[1] * target_height / sprite.shape[0]))
-                resized = cv2.resize(sprite, (target_width, target_height), interpolation=cv2.INTER_AREA)
+            contestant_count = int(rng.integers(1, min(5, len(candidate_contestants) + 1)))
+            chosen_contestants = rng.choice(candidate_contestants, size=contestant_count, replace=True)
+
+            for contestant_id in chosen_contestants:
                 side_left = bool(rng.integers(0, 2))
-                center_x = float(rng.uniform(0.12, 0.43) if side_left else rng.uniform(0.57, 0.88))
-                bottom_y = float(rng.uniform(0.25, 0.88))
-                x = int(center_x * width - target_width / 2)
-                y = int(bottom_y * height - target_height)
-                x = max(0, min(width - target_width, x))
-                y = max(0, min(height - target_height, y))
-                _composite(background, resized, x, y)
-                center_x_norm = (x + target_width / 2) / width
-                center_y_norm = (y + target_height / 2) / height
-                labels.append(
-                    f"{class_index[enemy_id]} {center_x_norm:.6f} {center_y_norm:.6f} "
-                    f"{target_width / width:.6f} {target_height / height:.6f}"
-                )
+                entity_ids = CONTESTANT_TO_ENTITIES.get(int(contestant_id), [int(contestant_id)])
+                for enemy_id in entity_ids:
+                    if enemy_id not in sprite_bank:
+                        continue
+                    sprite = sprite_bank[enemy_id][int(rng.integers(0, len(sprite_bank[enemy_id])))]
+                    target_height = int(rng.uniform(0.10, 0.22) * height)
+                    target_width = max(4, round(sprite.shape[1] * target_height / sprite.shape[0]))
+                    resized = cv2.resize(sprite, (target_width, target_height), interpolation=cv2.INTER_AREA)
+                    center_x = float(rng.uniform(0.12, 0.43) if side_left else rng.uniform(0.57, 0.88))
+                    bottom_y = float(rng.uniform(0.25, 0.88))
+                    x = int(center_x * width - target_width / 2)
+                    y = int(bottom_y * height - target_height)
+                    x = max(0, min(width - target_width, x))
+                    y = max(0, min(height - target_height, y))
+                    _composite(background, resized, x, y)
+                    center_x_norm = (x + target_width / 2) / width
+                    center_y_norm = (y + target_height / 2) / height
+                    labels.append(
+                        f"{class_index[enemy_id]} {center_x_norm:.6f} {center_y_norm:.6f} "
+                        f"{target_width / width:.6f} {target_height / height:.6f}"
+                    )
             image_path = image_dir / f"synthetic-{image_index:06d}.jpg"
             cv2.imencode(".jpg", background, [cv2.IMWRITE_JPEG_QUALITY, int(rng.integers(65, 96))])[1].tofile(
                 image_path
@@ -259,8 +320,16 @@ def _generate_synthetic_dataset(
         json.dumps({str(index): enemy_id for enemy_id, index in class_index.items()}, indent=2),
         encoding="utf-8",
     )
+    entity_to_contestant_map = {str(eid): eid for eid in class_ids}
+    for sub_id, parent_id in ENTITY_TO_CONTESTANT.items():
+        if sub_id in class_ids:
+            entity_to_contestant_map[str(sub_id)] = parent_id
+    (output / "battlefield" / "entity_to_contestant.json").write_text(
+        json.dumps(entity_to_contestant_map, indent=2),
+        encoding="utf-8",
+    )
     portrait_ids = {enemy.enemy_id for enemy, _ in available_portraits}
-    animation_ids = {enemy.enemy_id for enemy, _ in available_animations}
+    animation_ids = set(sprite_bank.keys())
     all_ids = {enemy.enemy_id for enemy in manifest.enemies}
     return SyntheticResult(
         portrait_images=portrait_count + empty_slot_count,

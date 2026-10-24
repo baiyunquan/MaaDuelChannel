@@ -134,3 +134,79 @@ def test_roster_recognizer_ignores_empty_slot():
     # Neither should produce observation without valid OCR count,
     # but even with count classifier, enemy_id < 1 is skipped immediately.
     assert len(observations) == 0
+
+
+def test_detect_empty_slot_functionality():
+    from maa_duel.vision.roster import detect_empty_slot
+
+    # 1. Flat low-contrast image without slash is not detected as empty slot by slash detector
+    flat = np.full((64, 64, 3), 60, dtype=np.uint8)
+    is_empty, conf = detect_empty_slot(flat)
+    assert is_empty is False
+    assert conf == 0.0
+
+    # 2. Synthetic realistic empty slot: gray disk + 45-degree white slash
+    empty_crop = np.full((64, 64, 3), 40, dtype=np.uint8)
+    cv2.circle(empty_crop, (32, 32), 26, (68, 68, 68), -1)
+    cv2.line(empty_crop, (20, 20), (44, 44), (210, 215, 210), 2, cv2.LINE_AA)
+    is_empty, conf = detect_empty_slot(empty_crop)
+    assert is_empty is True
+    assert conf == 1.0
+
+    # 3. Colorful occupied monster image: high saturation, colorful texture
+    monster_crop = np.zeros((64, 64, 3), dtype=np.uint8)
+    cv2.circle(monster_crop, (32, 32), 26, (0, 180, 220), -1)
+    cv2.circle(monster_crop, (32, 32), 12, (200, 50, 50), -1)
+    is_empty, conf = detect_empty_slot(monster_crop)
+    assert is_empty is False
+    assert conf == 0.0
+
+    # 4. Empty / None crop
+    assert detect_empty_slot(None) == (False, 0.0)
+    assert detect_empty_slot(np.zeros((0, 0, 3), dtype=np.uint8)) == (False, 0.0)
+
+
+def test_roster_recognizer_strict_prefilter_bypasses_classifier():
+    class TrackingClassifier:
+        def __init__(self):
+            self.calls: list[list[np.ndarray]] = []
+
+        def classify_batch(self, images: list[np.ndarray]) -> list[Classification]:
+            self.calls.append(images)
+            # Returns dummy classification for whatever is passed
+            return [Classification(enemy_id=42, confidence=0.99) for _ in images]
+
+    class DummyOcr:
+        def recognize(self, image, *, detect=True):
+            return []
+
+    # Slot 0 is empty slot, Slot 1 is monster slot
+    frame = np.zeros((200, 200, 3), dtype=np.uint8)
+
+    # In slot 0 area (rect: 0.1, 0.1, 0.3, 0.3 -> px: 20..60, 20..60): draw empty slot
+    cv2.circle(frame, (40, 40), 16, (68, 68, 68), -1)
+    cv2.line(frame, (30, 30), (50, 50), (210, 210, 210), 2, cv2.LINE_AA)
+
+    # In slot 1 area (rect: 0.5, 0.1, 0.7, 0.3 -> px: 100..140, 20..60): draw monster
+    cv2.circle(frame, (120, 40), 16, (0, 200, 220), -1)
+
+    slots = [
+        SlotSpec("left", 0, (0.1, 0.1, 0.3, 0.3), (0.1, 0.3, 0.3, 0.4)),
+        SlotSpec("left", 1, (0.5, 0.1, 0.7, 0.3), (0.5, 0.3, 0.7, 0.4)),
+    ]
+
+    tracker = TrackingClassifier()
+    recognizer = RosterFrameRecognizer(
+        classifier=tracker,
+        ocr=DummyOcr(),
+        slots=slots,
+        enable_empty_slot_prefilter=True,
+    )
+
+    recognizer.recognize(frame)
+
+    # Strict pre-filter should intercept slot 0 as empty!
+    # Therefore, tracker.classify_batch should receive only 1 image (slot 1), NOT both!
+    assert len(tracker.calls) == 1
+    assert len(tracker.calls[0]) == 1
+

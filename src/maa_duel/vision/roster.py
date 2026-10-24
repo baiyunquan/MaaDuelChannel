@@ -258,6 +258,63 @@ def make_circle_mask(size: int = 64) -> np.ndarray:
     return mask
 
 
+def detect_empty_slot(crop: np.ndarray) -> tuple[bool, float]:
+    """
+    Detects whether a cropped portrait slot is an empty slot (gray circular plate with a 45-degree pale white slash).
+    Uses directional Hessian 2nd derivative ridge analysis along the 45-degree line (y - x = C),
+    combined with inner circular disk saturation and standard deviation thresholds.
+    Returns (is_empty, confidence).
+    """
+    if crop is None or crop.size == 0 or min(crop.shape[:2]) < 10:
+        return False, 0.0
+
+    target = cv2.resize(crop, (64, 64))
+    gray = cv2.cvtColor(target, cv2.COLOR_BGR2GRAY) if len(target.shape) == 3 else target
+    hsv = cv2.cvtColor(target, cv2.COLOR_BGR2HSV) if len(target.shape) == 3 else None
+
+    # Inner circular mask (radius 20) around canonical center (32, 32)
+    mask = np.zeros((64, 64), dtype=np.uint8)
+    cv2.circle(mask, (32, 32), 20, 255, -1)
+
+    sat_mean = float(np.mean(hsv[:, :, 1][mask > 0])) if hsv is not None else 0.0
+    val_std = float(np.std(gray[mask > 0]))
+
+    # Gaussian blur & Hessian 2nd derivatives for 45-degree directional ridge
+    blurred = cv2.GaussianBlur(gray.astype(np.float32), (5, 5), 1.2)
+    Dxx = cv2.Sobel(blurred, cv2.CV_32F, 2, 0, ksize=3)
+    Dyy = cv2.Sobel(blurred, cv2.CV_32F, 0, 2, ksize=3)
+    Dxy = cv2.Sobel(blurred, cv2.CV_32F, 1, 1, ksize=3)
+    # Direction perpendicular to y = x is (1, -1), so second derivative along normal is:
+    ridge_45 = -0.5 * (Dxx - 2.0 * Dxy + Dyy)
+
+    ys, xs = np.where((ridge_45 > 12.0) & (mask > 0))
+    if len(xs) == 0:
+        return False, 0.0
+
+    diffs = ys - xs
+    min_d = int(np.min(diffs))
+    bins = np.bincount(diffs - min_d)
+
+    # Search for max collinear points in a sliding window of width 3 (allowing +-1 pixel line thickness)
+    max_collinear = 0
+    best_offset = 0
+    for i in range(len(bins)):
+        window = int(np.sum(bins[max(0, i - 1) : min(len(bins), i + 2)]))
+        if window > max_collinear:
+            max_collinear = window
+            best_offset = int(i + min_d)
+
+    # Empty slot criteria:
+    # 1. 45-degree slash ridge: collinear points >= 18 and offset near center (|offset| <= 16)
+    # 2. Low color saturation: sat_mean <= 32.0 (neutral dark gray)
+    # 3. Controlled luminance variation: val_std <= 55.0 (smooth disk with slash, not noisy entity)
+    is_slash = (max_collinear >= 18) and (abs(best_offset) <= 16)
+    is_empty = is_slash and (sat_mean <= 32.0) and (val_std <= 55.0)
+
+    confidence = 1.0 if is_empty else 0.0
+    return is_empty, confidence
+
+
 class TemplateMatchClassifier:
     """
     Classifies cropped portrait icons by normalized template matching against reference thumbnails,
@@ -308,8 +365,13 @@ class TemplateMatchClassifier:
                     self._templates[enemy_id] = resized
 
         if self.empty_slot_path and self.empty_slot_path.is_file():
-            empty_img = cv2.imread(str(self.empty_slot_path))
+            empty_img = cv2.imread(str(self.empty_slot_path), cv2.IMREAD_UNCHANGED)
             if empty_img is not None:
+                if len(empty_img.shape) > 2 and empty_img.shape[2] == 4:
+                    bgr = empty_img[:, :, :3]
+                    alpha = empty_img[:, :, 3:4].astype(np.float32) / 255.0
+                    bg = np.full_like(bgr, 60)
+                    empty_img = (bgr * alpha + bg * (1.0 - alpha)).astype(np.uint8)
                 resized = cv2.resize(empty_img, (self.target_size, self.target_size))
                 self._templates[0] = resized
 
@@ -322,10 +384,14 @@ class TemplateMatchClassifier:
         elif image.shape[2] == 4:
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
 
+        # Fast empty-slot detection
+        is_empty, empty_conf = detect_empty_slot(image)
+        if is_empty:
+            return Classification(enemy_id=0, confidence=empty_conf)
+
         target = cv2.resize(image, (self.target_size, self.target_size))
 
-        # Fast empty-slot rejection: empty circular slots have low pixel variance (std < 18),
-        # whereas actual enemy portraits have rich textures (std >= 27).
+        # Secondary low-contrast fallback
         if self.min_contrast > 0:
             circle_pixels = target[self._circle_mask > 0]
             if circle_pixels.size > 0:
@@ -422,6 +488,7 @@ class RosterFrameRecognizer:
         minimum_type_confidence: float = 0.15,
         minimum_count_confidence: float = 0.25,
         default_count: int | None = None,
+        enable_empty_slot_prefilter: bool = True,
     ) -> None:
         self.classifier = classifier
         self.ocr = ocr
@@ -430,6 +497,7 @@ class RosterFrameRecognizer:
         self.minimum_type_confidence = minimum_type_confidence
         self.minimum_count_confidence = minimum_count_confidence
         self.default_count = default_count
+        self.enable_empty_slot_prefilter = enable_empty_slot_prefilter
 
     @property
     def slots(self) -> list[SlotSpec]:
@@ -451,12 +519,39 @@ class RosterFrameRecognizer:
             for frame, slots in zip(frames, frame_slots_list, strict=True)
             for slot in slots
         ]
-        classify_batch = getattr(self.classifier, "classify_batch", None)
-        classifications = (
-            classify_batch(icon_crops)
-            if callable(classify_batch)
-            else [self.classifier.classify(crop) for crop in icon_crops]
-        )
+
+        if self.enable_empty_slot_prefilter:
+            classifications: list[Classification] = [Classification(enemy_id=0, confidence=0.0)] * len(icon_crops)
+            non_empty_indices: list[int] = []
+            non_empty_crops: list[np.ndarray] = []
+            for i, crop in enumerate(icon_crops):
+                is_empty, empty_conf = detect_empty_slot(crop)
+                if is_empty:
+                    classifications[i] = Classification(enemy_id=0, confidence=empty_conf)
+                else:
+                    non_empty_indices.append(i)
+                    non_empty_crops.append(crop)
+
+            if non_empty_crops:
+                classify_batch = getattr(self.classifier, "classify_batch", None)
+                if callable(classify_batch):
+                    batch_res = classify_batch(non_empty_crops)
+                    if len(batch_res) == len(non_empty_crops):
+                        for idx, res in zip(non_empty_indices, batch_res, strict=True):
+                            classifications[idx] = res
+                    else:
+                        for idx, crop in zip(non_empty_indices, non_empty_crops, strict=True):
+                            classifications[idx] = self.classifier.classify(crop)
+                else:
+                    for idx, crop in zip(non_empty_indices, non_empty_crops, strict=True):
+                        classifications[idx] = self.classifier.classify(crop)
+        else:
+            classify_batch = getattr(self.classifier, "classify_batch", None)
+            classifications = (
+                classify_batch(icon_crops)
+                if callable(classify_batch)
+                else [self.classifier.classify(crop) for crop in icon_crops]
+            )
         count_crops = [
             crop_normalized(frame, slot.count_rect)
             for frame, slots in zip(frames, frame_slots_list, strict=True)

@@ -23,8 +23,31 @@ class ReconciliationResult:
 
 SYNERGY_MULTIPLIERS: dict[int, int] = {
     57: 2,  # 并驾骑士（腐败骑士 + 凋零骑士）
-    58: 3,  # 侠客三人行（俗称“刘关张” / 桃园三结义）
+    58: 3,  # 侠客三人行（枣大刀 + 炭长矛 + 玉双剑）
+    74: 2,  # 调停的意志（凯尔希 + Mon2tr）
 }
+
+CONTESTANT_TO_ENTITIES: dict[int, list[int]] = {
+    57: [57, 92],       # 并驾骑士 -> 腐败骑士 (57), 凋零骑士 (92)
+    58: [58, 93, 94],   # 侠客三人行 -> 玉双剑 (58), 枣大刀 (93), 炭长矛 (94)
+    74: [74, 95],       # 调停的意志 -> 凯尔希 (74), Mon2tr (95)
+}
+
+ENTITY_TO_CONTESTANT: dict[int, int] = {
+    92: 57,
+    93: 58,
+    94: 58,
+    95: 74,
+}
+
+
+def expand_contestant_ids_to_entities(contestant_ids: set[int]) -> set[int]:
+    """Expand contestant IDs to include all battlefield entity IDs that may appear."""
+    expanded = set(contestant_ids)
+    for cid in contestant_ids:
+        if cid in CONTESTANT_TO_ENTITIES:
+            expanded.update(CONTESTANT_TO_ENTITIES[cid])
+    return expanded
 
 
 def get_expected_unit_count(enemy_id: int, roster_count: int) -> int:
@@ -47,8 +70,12 @@ def reconcile_detections(
     detections: list[RawDetection],
     minimum_confidence: float = 0.25,
 ) -> ReconciliationResult:
-    left_allowed = {entry.enemy_id for entry in left_roster if entry.enemy_id > 0}
-    right_allowed = {entry.enemy_id for entry in right_roster if entry.enemy_id > 0}
+    left_allowed = expand_contestant_ids_to_entities(
+        {entry.enemy_id for entry in left_roster if entry.enemy_id > 0}
+    )
+    right_allowed = expand_contestant_ids_to_entities(
+        {entry.enemy_id for entry in right_roster if entry.enemy_id > 0}
+    )
 
     # Cross-half leaks: only filter out detections strictly belonging to the opposite roster
     left_excluded = right_allowed - left_allowed
